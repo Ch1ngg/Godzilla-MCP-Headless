@@ -1,0 +1,15 @@
+target/
+build/
+*.class
+*.log
+.DS_Store
+.idea/
+*.iml
+
+# 本地依赖（请勿提交）
+lib/godzilla.jar
+lib/gson-*.jar
+
+# 本地测试用
+godzilla/
+lab/
