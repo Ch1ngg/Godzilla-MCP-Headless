@@ -18,7 +18,7 @@ REPO_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 
 # ---- 定位插件 JAR ----
 if [ -z "${MCP_JAR:-}" ]; then
-    for f in "$REPO_DIR"/dist/godzilla-mcp-*.jar "$REPO_DIR"/target/godzilla-mcp-*.jar "$SCRIPT_DIR"/godzilla-mcp-*.jar; do
+    for f in "$REPO_DIR"/dist/godzilla-mcp-*.jar "$REPO_DIR"/godzilla-mcp-*.jar "$REPO_DIR"/target/godzilla-mcp-*.jar "$SCRIPT_DIR"/godzilla-mcp-*.jar; do
         if [ -f "$f" ]; then MCP_JAR="$f"; break; fi
     done
 fi

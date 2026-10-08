@@ -16,7 +16,7 @@ PORT="${1:-${MCP_PORT:-5566}}"
 HOST="${2:-${MCP_HOST:-127.0.0.1}}"
 
 if [ -z "${MCP_JAR:-}" ]; then
-    for f in "$REPO_DIR"/dist/godzilla-mcp-*.jar "$REPO_DIR"/target/godzilla-mcp-*.jar "$SCRIPT_DIR"/godzilla-mcp-*.jar; do
+    for f in "$REPO_DIR"/dist/godzilla-mcp-*.jar "$REPO_DIR"/godzilla-mcp-*.jar "$REPO_DIR"/target/godzilla-mcp-*.jar "$SCRIPT_DIR"/godzilla-mcp-*.jar; do
         if [ -f "$f" ]; then MCP_JAR="$f"; break; fi
     done
 fi

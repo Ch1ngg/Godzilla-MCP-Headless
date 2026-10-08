@@ -1,0 +1,44 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn -B -q package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: godzilla-mcp-jar
+          path: target/godzilla-mcp-*.jar
+          if-no-files-found: error
+
+      - name: Publish release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" target/godzilla-mcp-*.jar \
+            --title "${GITHUB_REF_NAME}" --generate-notes \
+          || gh release upload "${GITHUB_REF_NAME}" target/godzilla-mcp-*.jar --clobber

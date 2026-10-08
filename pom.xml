@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>shells.plugins.online</groupId>
     <artifactId>godzilla-mcp</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <packaging>jar</packaging>
 
     <name>Godzilla-MCP Headless</name>
@@ -22,13 +22,12 @@
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
         </dependency>
-        <!-- 编译需要: 把你自己哥斯拉目录里的 godzilla.jar 复制到 lib/ 下（不会被打进产物） -->
+        <!-- Godzilla 本体（编译期依赖，来自 Maven Central；不会被打进产物，运行时使用本机 godzilla.jar） -->
         <dependency>
-            <groupId>com.godzilla</groupId>
+            <groupId>io.github.beichendream</groupId>
             <artifactId>godzilla</artifactId>
-            <version>4.0.1</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/godzilla.jar</systemPath>
+            <version>4.01</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

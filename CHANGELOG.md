@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.2.0 (2026-10-09)
+
+### 新增（工具集从 10 个扩展到 44 个）
+- 会话管理：`connect_shell`（免保存直连）、`disconnect_shell`、`list_sessions`、`test_connection`、`remove_shell`
+- 文件全家桶：`write_file` / `delete_file` / `copy_file` / `move_file` / `new_file` / `new_dir` / `list_root` / `file_size`
+- 大文件与远程：`download_file`（自动分块）、`big_file_upload`（分块）、`file_remote_down`（目标直连下载）
+- 系统信息：`current_user`、`process_list`、`network_info`、`screenshot`
+- 高级能力：`port_scan`、内存马 `memory_shell_inject/list/unload`、Filter 马 `filter_shell_add/list/remove`、`zip`、`exec_code`（PHP）、`enum_database_conn`、`list_databases`
+- 库管理（无 GUI 场景）：`plugin_list` / `plugin_add` / `plugin_remove`
+  - 说明：`exec_code`（PHP）依赖目标 `output_buffering > 0`（发行版默认 4096；PHP-CLI 内置服务器需 `-d output_buffering=4096`）
+- 工程：GitHub Actions 自动构建与发布（打 `v*` tag 自动出 Release）；`scripts/plugin.py`（无 JVM 直接管理插件库）
+
+### 变更
+- 构建依赖改用 Maven Central 的 `io.github.beichendream:godzilla:4.01`（编译不再需要手工放置 `lib/godzilla.jar`）
+- 移除仓库内 `dist/` 构建产物（产物由 CI/Release 提供）
+
+## v1.1.0 Headless Edition (2026-10-09)
+
+### 新增
+- 无头模式：`GodzillaMcpHeadlessBootstrap` 启动器 + `--stdio` 传输（Claude Desktop / Claude Code / Cursor 等直接接入，无需启动哥斯拉 GUI）
+- `generate_shell` 工具：生成 JSP / PHP 哥斯拉马（`JAVA_AES_BASE64` / `JAVA_AES_RAW` / `PHP_XOR_BASE64` / `PHP_XOR_RAW`）
+- HTTP 模式支持自定义端口与绑定地址（默认 `127.0.0.1:5566`）
+
+### 修复
+- 无头环境缺少 `ApplicationContext.init()` 导致 `ShellEntity` NPE（cryption / payload 注册表为空）
+- `util.Log` 输出到 stdout，污染 stdio 的 JSON-RPC 流（已隔离至 stderr）
+- `generate_shell` 密钥派生错误：与 `JavaAesBase64.generate` / `PhpXor.generate` 对齐为 `md5(secretKey)[0:16]`
+- `read_file` 使用 `payload.getFile()`（目录枚举）而非 `downloadFile()`（读取内容）
+
+### 工程
+- 启动脚本完全可移植：基于脚本自身目录定位 + `GZ_HOME` / `MCP_JAR` / `JAVA` / `MCP_WORKDIR` 环境变量
+- 新增无 Maven 构建脚本 `scripts/build.sh`
+- 新增冒烟测试 `test/smoke_test.py`
+
 ## v1.1.0 Headless Edition (2026-10-09)
 
 ### 新增
