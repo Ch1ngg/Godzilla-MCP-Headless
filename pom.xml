@@ -34,6 +34,12 @@
     <build>
         <finalName>godzilla-mcp-${project.version}</finalName>
         <plugins>
+            <!-- 锁定版本，避免上游插件解析抖动导致 CI 偶发失败 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
