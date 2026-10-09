@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.0 (2026-10-10)
+
+### 新增（工具集 44 → 50，补齐语言专属能力）
+- **通用**：
+  - `real_cmd`：虚拟终端（交互式命令执行，PHP/Java 载荷）。`start/write/read/stop/list` 会话协议，等效哥斯拉「虚拟终端」插件；实测两端（PHP 8.5 与 Tomcat）完整 shell 语义（命令执行、变量展开、多命令连续）
+- **PHP 专属**（5 个）：
+  - `php_ps`：免命令进程列表（直接解析 `/proc`；`disable_functions` 禁用命令函数时仍可用）
+  - `php_webshell_scan`：Webshell 特征扫描（正则匹配 PHP/INC，返回 file/line/code JSON）
+  - `php_bypass_open_basedir`：绕过 open_basedir（写入会话标志，后续文件操作按上游资产逻辑解锁）
+  - `php_bypass_disable_functions`：四种方式绕过 `disable_functions` 执行命令（`mem` 内存绕过 / `env` LD_PRELOAD / `fpm` 攻击 PHP-FPM / `amc` Apache Mod CGI）
+  - `php_attack_fpm`：FastCGI 直打 PHP-FPM 执行任意代码（内置 FastCGI 客户端；已实测对 PHP 8.5-FPM 完整 RCE 并回显执行结果）
+- **多语言路由**：`zip`、`port_scan`、`exec_code` 按载荷语言自动选择实现
+  - `zip`：Java（JZip）/ PHP（PZip，ZipArchive）——两端实测通过
+  - `port_scan`：Java（plugin.JPortScan）/ PHP（PortScan）——两端实测通过
+  - `exec_code`：PHP（PHP_Eval_Code）/ ASP（AEvalCode）；Java / C# 上游无代码执行插件
+
+### 修复
+- **长会话偶发“失败后无法恢复”**：`onTarget` 重试路径在缓存失效且数据库中无该 URL 时会抛出 `Shell URL not found`，吞掉原始错误；现在 `connect_shell` / `add_shell` 记录会话凭据，缓存失效时**原位重建**（无需数据库），并保留原始错误信息
+- `php_ps` 表头行被误当 Base64 解码产生乱码
+
+### 兼容性说明
+- `real_cmd` 需要目标支持**并发请求**：Apache / PHP-FPM / Nginx+FPM 直接可用；`php -S` 需 `PHP_CLI_SERVER_WORKERS>1`（单进程下长挂终端请求会占满内置服务器，上游插件机制如此）
+- `php_bypass_open_basedir` / `php_bypass_disable_functions` / `php_attack_fpm` 使用上游资产（ant .so 为 x86_64；部分 mem payload 仅适用于 PHP 7.x / 特定扩展），实际生效范围以目标环境为准
+
 ## v1.2.2 (2026-10-10)
 
 ### 修复
