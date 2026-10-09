@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.4.0 (2026-10-10)
+
+### 新增（工具集 50 → 56，Windows / .NET 补全）
+- **Windows / .NET 工具**：
+  - `mimikatz`：内置 mimikatz PE 在客户端侧转 shellcode、目标内存中加载执行（Java / C# 载荷；参数默认 `privilege::debug` / `sekurlsa::logonpasswords` / `exit`）
+  - `petit_potam`：内存加载 EfsPotato 执行命令（Java / C# 载荷）
+  - `shellcode_load`：hex 或本地文件加载执行 shellcode（Java / C# 载荷；自动适配 AsmLoader / ShellcodeLoader + GodzillaJna）
+  - `windows_privesc`：提权四件套 `bad`（BadPotato）/ `sweet`（SweetPotato，含 CLSID）/ `efs`（EfsPotato）/ `lemon`（Lemon）
+  - `sharp_web`：内存加载 SharpWeb 读取浏览器密码/凭据
+  - `csharp_memory_shell`：C# 内存马注入（addShell）+ bypassFriendlyUrlRoute / bypassPrecompiledApp
+- **多语言路由扩展**：`zip`（CZip.Run）、`port_scan`（CProtScan.Run）、`real_cmd`（RealCmd.Run）新增 **C# 载荷分支**——三类工具现覆盖 Java / PHP / C# 全系
+
+### 工程
+- **Windows 启动脚本**：新增 `scripts/run-http.bat` 与 `scripts/run-stdio.bat`（功能与 .sh 对齐：MCP_JAR / GZ_HOME / MCP_WORKDIR 探测、端口参数、JAVA_OPTS、data.db 工作目录）
+
+### 说明
+- Windows 专属工具（mimikatz / potato 系 / SharpWeb 等）面向 Windows 目标，未在本仓库 Linux 实验室环境做实机回归；各工具调用序列与参数逐项对齐官方客户端实现
+
 ## v1.3.0 (2026-10-10)
 
 ### 新增（工具集 44 → 50，补齐语言专属能力）

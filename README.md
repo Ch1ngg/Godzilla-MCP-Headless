@@ -14,18 +14,19 @@
 
 ---
 
-## 功能一览（50 个工具）
+## 功能一览（56 个工具）
 
 | 类别 | 工具 |
 |---|---|
 | 会话管理 | `list_shells` `add_shell` `connect_shell`（免保存直连）`disconnect_shell` `list_sessions` `test_connection` `remove_shell` |
 | 生成/配置 | `generate_shell`（JSP/PHP/C#/ASP 全系马，14 种 cryption）`get_env_config` |
 | 系统信息 | `get_basics_info` `current_user` `process_list` `network_info` `screenshot` |
-| 命令/代码 | `exec_command` `exec_code`（PHP/ASP 代码执行）`real_cmd`（虚拟终端，PHP/Java）|
+| 命令/代码 | `exec_command` `exec_code`（PHP/ASP 代码执行）`real_cmd`（虚拟终端，PHP/Java/C#）|
 | 文件操作 | `list_files` `read_file` `write_file` `upload_file` `download_file` `delete_file` `copy_file` `move_file` `new_file` `new_dir` `list_root` `file_size` `file_remote_down` `big_file_upload` |
 | 数据库 | `exec_sql` `list_databases` `enum_database_conn` |
-| 高级能力 | `port_scan`（Java/PHP）`memory_shell_inject` `memory_shell_list` `memory_shell_unload` `filter_shell_add` `filter_shell_list` `filter_shell_remove` `zip`（压缩/解压，Java/PHP）|
+| 高级能力 | `port_scan`（Java/PHP/C#）`memory_shell_inject` `memory_shell_list` `memory_shell_unload` `filter_shell_add` `filter_shell_list` `filter_shell_remove` `zip`（压缩/解压，Java/PHP/C#）|
 | PHP 专属 | `php_ps`（免命令进程列表）`php_webshell_scan`（Webshell 扫描）`php_bypass_open_basedir` `php_bypass_disable_functions`（mem/env/fpm/amc 四方式）`php_attack_fpm`（FastCGI 直打 FPM）|
+| Windows / .NET | `mimikatz`（内存加载抓密码）`petit_potam` `shellcode_load` `windows_privesc`（bad/sweet/efs/lemon 提权四件套）`sharp_web`（浏览器凭据）`csharp_memory_shell`（C# 内存马）|
 | 哥斯拉库管理 | `plugin_list` `plugin_add` `plugin_remove` |
 
 协议：MCP `2024-11-05`（JSON-RPC 2.0），端点 `/mcp`（HTTP 模式）或 stdio。
