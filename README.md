@@ -235,6 +235,8 @@ python3 test/smoke_test.py "http://127.0.0.1:18080/gz/shell.jsp" "pass123" "0123
 
 ## 变更记录（摘要）
 
+**v1.2.2**：修复 HTTP 模式未初始化核心注册表（连接类工具不可用）；启动日志如实显示绑定地址；macOS 默认隐藏 Dock 图标。
+**v1.2.1**：`generate_shell` 全系生成（14 种 cryption，与核心生成器逐字节一致）；`get_env_config` 实时读取注册表。
 **v1.2.0**：工具集 10 → 44（会话/文件/大文件/内存马/端口扫描/插件库管理等）；改用 Maven Central 编译依赖；CI 自动构建与发布；新增 `scripts/plugin.py`（VPS 插件管理）。
 **v1.1.0**：无头启动器 + stdio 传输；`generate_shell`；修复 `ApplicationContext` 未初始化 NPE、`util.Log` 污染 stdio、密钥派生、`read_file` 接口。
 
@@ -247,6 +249,9 @@ python3 test/smoke_test.py "http://127.0.0.1:18080/gz/shell.jsp" "pass123" "0123
 **Q：stdio 模式的进程"退出"了？** stdio 服务器跟随客户端生命周期，属正常设计；需要常驻请用 HTTP 模式。
 
 **Q：Linux 无显示环境跑不起来？** 装 `xvfb`（`apt install xvfb`）即可，脚本在无 `DISPLAY` 时自动改用 `xvfb-run`（原因：哥斯拉核心初始化会读取屏幕尺寸）。
+
+**Q：macOS 下跑 stdio/HTTP 会闪出 java 的 Dock 图标？**  
+A: 这是哥斯拉核心初始化读取屏幕尺寸触发的 AWT 注册（不是启动 GUI）。v1.2.2 起启动脚本在 macOS 默认附加 `-Dapple.awt.UIElement=true`，Dock 图标不再出现且功能不受影响；自定义 JVM 参数可用 `JAVA_OPTS` 环境变量。
 
 **Q：会和哥斯拉 GUI 冲突吗？** 可共用同一个 `data.db`（读互不影响）；避免两边同时写入（如同时 `add_shell`）。
 

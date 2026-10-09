@@ -39,12 +39,17 @@ WORKDIR="${MCP_WORKDIR:-$GZ_HOME}"
 cd "$WORKDIR" || exit 1
 
 JAVA="${JAVA:-java}"
+JAVA_OPTS="${JAVA_OPTS:-}"
+# macOS：隐藏 AWT 初始化触发的 Dock 图标（不影响读屏幕尺寸等调用）
+if [ "$(uname -s)" = "Darwin" ]; then
+    JAVA_OPTS="$JAVA_OPTS -Dapple.awt.UIElement=true"
+fi
 CP="$MCP_JAR:$GZ_HOME/godzilla.jar"
 
 echo "[Godzilla-MCP] HTTP 模式: http://$HOST:$PORT/mcp （Ctrl+C 退出）" >&2
 
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
-    exec xvfb-run -a "$JAVA" -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap "$PORT" "$HOST"
+    exec xvfb-run -a "$JAVA" $JAVA_OPTS -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap "$PORT" "$HOST"
 else
-    exec "$JAVA" -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap "$PORT" "$HOST"
+    exec "$JAVA" $JAVA_OPTS -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap "$PORT" "$HOST"
 fi

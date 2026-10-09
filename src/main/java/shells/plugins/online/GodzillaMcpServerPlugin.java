@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
 /**
- * Godzilla-MCP Headless Edition v1.2.1
+ * Godzilla-MCP Headless Edition v1.2.2
  * ====================================
  * 基于 hkdonline/Godzilla-MCP（上游改版自 cns1rius/godzilla-mcp）修改，感谢原作者。
  *
@@ -62,7 +62,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final String SERVER_NAME = "godzilla-mcp";
-    private static final String SERVER_VERSION = "1.2.1";
+    private static final String SERVER_VERSION = "1.2.2";
     private static final SimpleDateFormat LOG_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static PrintWriter logWriter = null;
 
@@ -173,6 +173,12 @@ public class GodzillaMcpServerPlugin implements Plugin {
             if (args.length >= 2) {
                 BIND_HOST = args[1];
             }
+            try {
+                core.ApplicationContext.init();
+                log("[headless] ApplicationContext 初始化完成");
+            } catch (Throwable t) {
+                log("[headless] ApplicationContext.init 异常: " + t);
+            }
             startServer(port);
             log("[headless] HTTP 模式运行中: http://" + BIND_HOST + ":" + port + "/mcp (Ctrl+C 退出)");
         }
@@ -279,7 +285,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
         mcpServer.setExecutor(Executors.newFixedThreadPool(10));
         mcpServer.start();
         isServerRunning = true;
-        log("[Godzilla MCP] MCP 服务启动，绑定 0.0.0.0:" + port);
+        log("[Godzilla MCP] MCP 服务启动，绑定 " + BIND_HOST + ":" + port);
     }
 
     private static void stopServer() {

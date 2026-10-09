@@ -44,6 +44,11 @@ WORKDIR="${MCP_WORKDIR:-$GZ_HOME}"
 cd "$WORKDIR" || exit 1
 
 JAVA="${JAVA:-java}"
+JAVA_OPTS="${JAVA_OPTS:-}"
+# macOS：隐藏 AWT 初始化触发的 Dock 图标（不影响读屏幕尺寸等调用）
+if [ "$(uname -s)" = "Darwin" ]; then
+    JAVA_OPTS="$JAVA_OPTS -Dapple.awt.UIElement=true"
+fi
 CP="$MCP_JAR:$GZ_HOME/godzilla.jar"
 
 echo "[Godzilla-MCP] stdio 模式 | jar=$MCP_JAR | db=$(pwd)/data.db" >&2
@@ -51,7 +56,7 @@ echo "[Godzilla-MCP] stdio 模式 | jar=$MCP_JAR | db=$(pwd)/data.db" >&2
 # 无显示环境的 Linux 服务器：用 xvfb-run 提供虚拟显示
 # （哥斯拉核心初始化会读取屏幕尺寸，纯 headless 下会抛异常）
 if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
-    exec xvfb-run -a "$JAVA" -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap --stdio
+    exec xvfb-run -a "$JAVA" $JAVA_OPTS -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap --stdio
 else
-    exec "$JAVA" -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap --stdio
+    exec "$JAVA" $JAVA_OPTS -cp "$CP" shells.plugins.online.GodzillaMcpHeadlessBootstrap --stdio
 fi

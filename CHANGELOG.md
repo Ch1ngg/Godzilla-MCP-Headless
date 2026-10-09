@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.2 (2026-10-10)
+
+### 修复
+- **HTTP 模式未初始化 `ApplicationContext`，导致连接类工具不可用**（`get_env_config` 为空、`connect_shell` / 目标操作类全部失败）；该初始化此前只挂在 stdio 分支，现已补齐
+- 启动日志如实显示实际绑定地址（原先固定打印 `0.0.0.0`，易误判暴露面）
+
+### 优化
+- 启动脚本支持 `JAVA_OPTS`，并在 macOS 默认附加 `-Dapple.awt.UIElement=true`（消除 JVM 的 Dock 图标闪现；哥斯拉核心读屏幕尺寸的 AWT 初始化不再显示"java 图标"）
+
 ## v1.2.1 (2026-10-09)
 
 ### 增强
