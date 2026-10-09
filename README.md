@@ -19,7 +19,7 @@
 | 类别 | 工具 |
 |---|---|
 | 会话管理 | `list_shells` `add_shell` `connect_shell`（免保存直连）`disconnect_shell` `list_sessions` `test_connection` `remove_shell` |
-| 生成/配置 | `generate_shell`（JSP/PHP 马）`get_env_config` |
+| 生成/配置 | `generate_shell`（JSP/PHP/C#/ASP 全系马，14 种 cryption）`get_env_config` |
 | 系统信息 | `get_basics_info` `current_user` `process_list` `network_info` `screenshot` |
 | 命令/代码 | `exec_command` `exec_code`（PHP 代码执行）|
 | 文件操作 | `list_files` `read_file` `write_file` `upload_file` `download_file` `delete_file` `copy_file` `move_file` `new_file` `new_dir` `list_root` `file_size` `file_remote_down` `big_file_upload` |
@@ -162,6 +162,9 @@ sqlite3 data.db "DELETE FROM plugin WHERE pluginJarFile='/opt/gz/plugins/MyPlugi
 
 生成后上传到目标，用同组「密码/密钥」+ 对应 payload/cryption 连接（JSP:`JavaDynamicPayload`+`JAVA_AES_BASE64`；PHP:`PhpDynamicPayload`+`PHP_XOR_BASE64`）。
 密钥在生成时按哥斯拉规则自动派生 `md5(secretKey)[0:16]`。
+
+支持的完整矩阵（与哥斯拉核心生成器逐字节一致）：
+`JAVA_AES_BASE64/RAW`（suffix: jsp/jspx）、`PHP_XOR_BASE64/RAW`、`PHP_EVAL_XOR_BASE64`、`CSHAP_AES_BASE64/RAW`（suffix: aspx/asmx/ashx）、`CSHAP_ASMX_AES_BASE64`、`CSHAP_EVAL_AES_BASE64`、`ASP_XOR_BASE64/RAW`、`ASP_BASE64/RAW`、`ASP_EVAL_BASE64`。
 
 ### 注意事项
 

