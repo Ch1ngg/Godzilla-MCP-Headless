@@ -7,8 +7,8 @@
 - 🔌 **两种传输**：`stdio`（Claude Desktop / Claude Code / Cursor 直接拉起，零端口）与 `HTTP/SSE`（常驻服务，任意 MCP 客户端可接入）
 - 🗂 **直连你的哥斯拉数据**：与哥斯拉共用同一个 `data.db`，已保存的 Webshell 直接可用
 - 🧩 **同一份 JAR 双形态**：也可以放进哥斯拉 `shells/plugins/java/` 当插件用（菜单照常）
-- 🛠 **44 个工具**：会话 / 文件 / 大文件传输 / 命令与代码执行 / 内存马 / 端口扫描 / 数据库 / 插件库管理 / 马生成
-- ✅ 全链路实测：Docker Tomcat(JDK8) JSP 马 与 PHP 靶机（生成 → 上线 → 命令 → 文件 → 内存马 → 插件管理）
+- 🛠 **56 个工具**：会话 / 文件 / 大文件传输 / 命令与代码 / 虚拟终端 / 内存马 / 端口扫描 / 数据库 / PHP 专属 / Windows 与 .NET / 插件库管理 / 马生成
+- ✅ 全链路实测：Java（Tomcat）、PHP 8.5 / 7.4、FastCGI-FPM 三类靶机（命令 / 代码 / 虚拟终端 / 压缩 / 端口扫描 / FPM RCE / disable_functions 绕过）
 
 > 仅把自有 `godzilla.jar` 当类库使用，**不需要、也不会启动哥斯拉主程序**。
 
@@ -84,6 +84,7 @@ cd Godzilla-MCP-Headless
 claude mcp add godzilla /绝对路径/Godzilla-MCP-Headless/scripts/run-stdio.sh
 ```
 
+> Windows（cmd）：command 换成 `C:\...\Godzilla-MCP-Headless\scripts\run-stdio.bat`（写进 JSON 时反斜杠需双写 `\\`）。
 > `godzilla.jar` / `data.db` 就在 `~/Godzilla` 时，连 `env` 都不用配。
 
 ### 2. HTTP 模式（常驻 / 远程接入）
@@ -91,6 +92,7 @@ claude mcp add godzilla /绝对路径/Godzilla-MCP-Headless/scripts/run-stdio.sh
 ```bash
 ./scripts/run-http.sh                  # 默认 http://127.0.0.1:5566/mcp
 ./scripts/run-http.sh 8899 0.0.0.0     # 自定义端口 / 绑定地址
+# Windows（cmd）: scripts\run-http.bat 8899 0.0.0.0
 ```
 
 客户端（url 型）：
@@ -171,8 +173,9 @@ sqlite3 data.db "DELETE FROM plugin WHERE pluginJarFile='/opt/gz/plugins/MyPlugi
 ### 注意事项
 
 - **exec_command（Java 载荷）**：单进程 + 参数拆分语义，复合命令需包一层 shell：`/bin/sh -c "id; echo OK"`；PHP 载荷可直接 `;` 串联。
-- **exec_code（PHP 载荷）**：依赖目标 PHP 的 `output_buffering > 0`（主流发行版默认 4096；PHP-CLI 内置服务器需 `-d output_buffering=4096`）。
-- **内存马**：`memory_shell_inject` 支持 `AES_BASE64/AES_RAW/Behinder/Cknife/ReGeorg`，注入后可用同密码/密钥以 `JAVA_AES_BASE64` 连接；Servlet 型用 `memory_shell_list/unload` 管理，Filter 型用 `filter_shell_*` 管理。
+- **exec_code（PHP / ASP 载荷）**：PHP 依赖目标 `output_buffering > 0`（主流发行版默认 4096；PHP-CLI 内置服务器需 `-d output_buffering=4096`）。
+- **内存马**：Java 用 `memory_shell_inject`（支持 `AES_BASE64/AES_RAW/Behinder/Cknife/ReGeorg`），注入后可用同密码/密钥以 `JAVA_AES_BASE64` 连接；Servlet 型用 `memory_shell_list/unload` 管理，Filter 型用 `filter_shell_*` 管理；C#/.NET（IIS）用 `csharp_memory_shell`。
+- **real_cmd（虚拟终端）**：需要目标支持并发请求（Apache / PHP-FPM / 多 worker php -S）；单进程 php -S 会被长挂终端请求独占（上游插件机制如此）。
 
 ---
 
@@ -237,10 +240,12 @@ python3 test/smoke_test.py "http://127.0.0.1:18080/gz/shell.jsp" "pass123" "0123
 
 ## 变更记录（摘要）
 
-**v1.2.2**：修复 HTTP 模式未初始化核心注册表（连接类工具不可用）；启动日志如实显示绑定地址；macOS 默认隐藏 Dock 图标。
-**v1.2.1**：`generate_shell` 全系生成（14 种 cryption，与核心生成器逐字节一致）；`get_env_config` 实时读取注册表。
-**v1.2.0**：工具集 10 → 44（会话/文件/大文件/内存马/端口扫描/插件库管理等）；改用 Maven Central 编译依赖；CI 自动构建与发布；新增 `scripts/plugin.py`（VPS 插件管理）。
-**v1.1.0**：无头启动器 + stdio 传输；`generate_shell`；修复 `ApplicationContext` 未初始化 NPE、`util.Log` 污染 stdio、密钥派生、`read_file` 接口。
+- **v1.4.0**：工具集 50 → 56，Windows/.NET 补全（`mimikatz` / `petit_potam` / `shellcode_load` / `windows_privesc` / `sharp_web` / `csharp_memory_shell`）；`zip` / `port_scan` / `real_cmd` 增加 C# 载荷分支；新增 Windows 启动脚本（`run-http.bat` / `run-stdio.bat`）。
+- **v1.3.0**：工具集 44 → 50，`real_cmd` 虚拟终端（PHP/Java/C#）与 5 个 PHP 专属工具（`php_ps` / `php_webshell_scan` / `php_bypass_open_basedir` / `php_bypass_disable_functions` / `php_attack_fpm`）；会话凭据原位重建与错误可读性修复。
+- **v1.2.2**：修复 HTTP 模式未初始化核心注册表（连接类工具不可用）；启动日志如实显示绑定地址；macOS 默认隐藏 Dock 图标。
+- **v1.2.1**：`generate_shell` 全系生成（14 种 cryption，与核心生成器逐字节一致）；`get_env_config` 实时读取注册表。
+- **v1.2.0**：工具集 10 → 44（会话/文件/大文件/内存马/端口扫描/插件库管理等）；改用 Maven Central 编译依赖；CI 自动构建与发布；新增 `scripts/plugin.py`（VPS 插件管理）。
+- **v1.1.0**：无头启动器 + stdio 传输；`generate_shell`；修复 `ApplicationContext` 未初始化 NPE、`util.Log` 污染 stdio、密钥派生、`read_file` 接口。
 
 完整记录见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -252,8 +257,7 @@ python3 test/smoke_test.py "http://127.0.0.1:18080/gz/shell.jsp" "pass123" "0123
 
 **Q：Linux 无显示环境跑不起来？** 装 `xvfb`（`apt install xvfb`）即可，脚本在无 `DISPLAY` 时自动改用 `xvfb-run`（原因：哥斯拉核心初始化会读取屏幕尺寸）。
 
-**Q：macOS 下跑 stdio/HTTP 会闪出 java 的 Dock 图标？**  
-A: 这是哥斯拉核心初始化读取屏幕尺寸触发的 AWT 注册（不是启动 GUI）。v1.2.2 起启动脚本在 macOS 默认附加 `-Dapple.awt.UIElement=true`，Dock 图标不再出现且功能不受影响；自定义 JVM 参数可用 `JAVA_OPTS` 环境变量。
+**Q：macOS 下跑 stdio/HTTP 会闪出 java 的 Dock 图标？** 哥斯拉核心初始化会读取屏幕尺寸并触发 AWT 注册（不是启动 GUI）；v1.2.2 起启动脚本在 macOS 默认附加 `-Dapple.awt.UIElement=true`，Dock 图标不再出现且功能不受影响；自定义 JVM 参数可用 `JAVA_OPTS` 环境变量。
 
 **Q：会和哥斯拉 GUI 冲突吗？** 可共用同一个 `data.db`（读互不影响）；避免两边同时写入（如同时 `add_shell`）。
 
